@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # A check that has never failed is a decoration, and this skill hands its checker to other
 # repositories
-# Needs bash 3.2 and POSIX tools only for its own code, plus git for the vendoring check
-# and for the fixture that proves an unstaged file is still seen; both halves call the
-# flake's dev shell for their tools — shellcheck and shfmt for what the repository ships,
-# nixfmt, statix, deadnix, jq and nix-instantiate for what check-nix.sh reads
+# Needs bash 3.2 and POSIX tools only for its own code, plus git for the vendoring check and
+# for the fixture that proves an unstaged file is still seen, and nix to run the same rules
+# through the flake's own checks output; both halves call the flake's dev shell for their
+# tools — shellcheck and shfmt for what the repository ships, nixfmt, statix, deadnix, jq
+# and nix-instantiate for what check-nix.sh reads
 set -euo pipefail
 
 usage() {
@@ -83,6 +84,12 @@ check_lint() {
 
   echo "== the repository's own Nix holds to the standard it ships"
   ./check-nix.sh
+
+  echo "== and holds to it the way a consumer gets it, inside the sandbox"
+  # The same rules through checks.<system>.nix-lint, where there is no network, no store and no
+  # repository. It is the shape every consumer runs, so a seam that only works outside the
+  # sandbox would be found by them rather than here
+  CHECK_NIX_NESTED=1 nix flake check --offline --no-write-lock-file
 }
 
 check_behaviour() {

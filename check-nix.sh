@@ -262,7 +262,7 @@ trap 'rm -rf "$work"' EXIT
 tool_preflight() {
   local missing=""
   local t
-  for t in nixfmt statix deadnix jq nix-instantiate; do
+  for t in nixfmt statix deadnix jq nix-instantiate git; do
     command -v "$t" >/dev/null 2>&1 || missing="${missing:+$missing, }$t"
   done
   [[ -z "$missing" ]] ||
@@ -763,7 +763,9 @@ fi
 # convention as readily as a module, and a rename has to find every reference to it. Conventional
 # root metadata is the one shape spelled in capitals on purpose
 kebab_rows=""
+names_read=0
 if ((${#paths[@]} == 0)) && git -C "$root" rev-parse --git-dir >/dev/null 2>&1; then
+  names_read=1
   kebab_rows=$(git -C "$root" ls-files --cached --others --exclude-standard | awk '
     {
       n = split($0, part, "/")
@@ -1217,6 +1219,10 @@ noun="files"
 summary="check-nix: $file_count .nix $noun, 3 tools, $rule_count rules"
 ((static == 0)) || summary="$summary; --static, so nothing that evaluates the flake ran"
 ((unforced == 0)) || summary="$summary; an output needed inputs this machine does not hold, so what it evaluates to went unchecked"
+# The file list comes from the repository itself, so outside one — the nix flake check sandbox is
+# where this happens — there is nothing to hold to the naming convention, and saying nothing about
+# that would read as the names having been checked and found good
+((names_read || ${#paths[@]})) || summary="$summary; no repository here, so no name was checked"
 ((planted == 0)) || summary="$summary; $planted planted defects caught"
 printf '%s\n' "$summary" >&2
 
