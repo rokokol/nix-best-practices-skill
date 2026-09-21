@@ -60,6 +60,11 @@ rules() {
 nixfmt-formatted	delegated	a file nixfmt would rewrite
 statix	delegated	an antipattern statix names, minus the two lints that fight module Nix
 deadnix	delegated	an unused binding, lambda argument or inherit
+file-kebab-case	names	a tracked path component that is not kebab-case
+with-at-file-level	text	a with whose scope is the whole file body
+module-arg-order	header	formals not in the order: the standard ones, the rest alphabetically, then ...
+arg-line-shape	header	up to two named formals split across lines, or three and more on one
+file-comment-placement	header	a module's file comment above its header, or held off its body by a blank line
 EOF
 }
 
@@ -319,12 +324,205 @@ check_deadnix() {
   done
 }
 
+# ---- the excuses ---------------------------------------------------------------------------------
+# check-nix.allow holds what a repository knows this checker cannot: `ID PATH [TEXT]` per line, a
+# path ending in / standing for everything under it, as vendor-sync.sh already spells a directory.
+# An entry that excuses nothing is itself a finding — an excuse must not outlive its reason, which
+# is the same rule the standard states about a comment carrying a date instead of a cause
+allow_file="$root/check-nix.allow"
+: >"$work/allow"
+: >"$work/allow.used"
+if [[ -r "$allow_file" ]]; then
+  lineno=0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    lineno=$((lineno + 1))
+    case "$line" in '' | '#'*) continue ;; esac
+    read -r entry_id entry_path _ <<<"$line"
+    [[ -n "$entry_id" && -n "$entry_path" ]] ||
+      die "$allow_file:$lineno: an entry is ID PATH [TEXT], and this one is: $line"
+    printf '%s\t%s\n' "$entry_id" "$entry_path" >>"$work/allow"
+  done <"$allow_file"
+fi
+
+rel_path() { # rel_path PATH -> the path as the repository spells it
+  case "$1" in "$root"/*) printf '%s' "${1#"$root"/}" ;; *) printf '%s' "$1" ;; esac
+}
+
+excused() { # excused ID PATH — and the entry that did it is marked used
+  local id="$1" path eid epath
+  path=$(rel_path "$2")
+  while IFS=$'\t' read -r eid epath; do
+    [[ "$eid" == "$id" ]] || continue
+    case "$epath" in
+      */) case "$path" in "$epath"*) ;; *) continue ;; esac ;;
+      *) [[ "$path" == "$epath" ]] || continue ;;
+    esac
+    printf '%s\t%s\n' "$eid" "$epath" >>"$work/allow.used"
+    return 0
+  done <"$work/allow"
+  return 1
+}
+
+finding_unless_excused() { # finding_unless_excused ID PATH MESSAGE
+  excused "$1" "$2" || finding "$3"
+}
+
+# ---- generated files -------------------------------------------------------------------------
+# NixOS writes hardware-configuration.nix and a repository does not edit it, so its unused pkgs
+# argument, its header and its comments are nobody's finding. The one default exemption there is
+is_generated() { # is_generated FILE
+  case "$1" in */hardware-configuration.nix) return 0 ;; esac
+  return 1
+}
+
+# ---- the tree ------------------------------------------------------------------------------------
+# nix-instantiate --parse re-prints the parsed expression as canonical Nix on one line, fully
+# parenthesised, with every comment gone and every layout choice normalised. It is this checker's
+# equivalent of `shfmt --to-json`, with one measured limit: it sorts attribute keys and lambda
+# formals alphabetically, so it can answer what a file's shape is but never what order anything
+# was written in. Order is a question for the text
+tree_of() { # tree_of FILE -> the canonical line, cached
+  local f="$1" cached
+  cached="$work/tree.$(printf '%s' "$f" | tr -c 'A-Za-z0-9' '.')"
+  [[ -s "$cached" ]] || nix-instantiate --parse "$f" >"$cached" 2>/dev/null || :
+  cat "$cached"
+}
+
+is_lambda() { # is_lambda FILE — does the file evaluate to a function taking formals
+  case "$(tree_of "$1" | head -c 2)" in '({') return 0 ;; esac
+  return 1
+}
+
+# ---- the header ----------------------------------------------------------------------------------
+# The one region where text can be read without a lexer: before the first `}:` there are no strings
+# and no nesting, measured across every .nix file in the family. The awk emits one row —
+# SHAPE, NAMED, VARIADIC, ABOVE, AFTER, GAP, FORMALS — and every header rule reads it
+header_facts() { # header_facts FILE
+  awk '
+    BEGIN { state = "pre"; shape = "none"; above = 0; named = 0; variadic = 0; after = 0; gap = 0; f = "" }
+    state == "pre" && /^[[:space:]]*$/ { next }
+    state == "pre" && /^#/ { above = 1; next }
+    state == "pre" && /^\{[[:space:]]*$/ { shape = "multi"; state = "formals"; next }
+    state == "pre" && /^\{.*\}[[:space:]]*:/ {
+      shape = "inline"
+      line = $0
+      sub(/^\{/, "", line)
+      sub(/\}[[:space:]]*:.*$/, "", line)
+      n = split(line, parts, ",")
+      for (i = 1; i <= n; i++) {
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", parts[i])
+        if (parts[i] == "...") variadic = 1
+        else if (parts[i] != "") { named++; f = f (f ? " " : "") parts[i] }
+      }
+      state = "body"
+      next
+    }
+    state == "pre" { exit }
+    state == "formals" && /^\}[[:space:]]*:/ { state = "body"; next }
+    state == "formals" {
+      line = $0
+      gsub(/^[[:space:]]+|,[[:space:]]*$/, "", line)
+      gsub(/[[:space:]]+$/, "", line)
+      if (line == "...") variadic = 1
+      else if (line != "") { named++; f = f (f ? " " : "") line }
+      next
+    }
+    state == "body" && /^[[:space:]]*$/ { if (after) gap = 1; next }
+    state == "body" && /^#/ { after = 1; next }
+    state == "body" { exit }
+    END { printf "%s\t%d\t%d\t%d\t%d\t%d\t%s\n", shape, named, variadic, above, after, gap, f }
+  ' "$1"
+}
+
+# The standard module arguments, in the order they come in; everything after them is alphabetical.
+# `...` is always last, and nixfmt keeps whichever of the two line shapes it is given, so both the
+# order and the shape are on the author
+standard_args="config lib pkgs osConfig"
+
+expected_order() { # expected_order FORMALS... -> the order they should have been written in
+  local given="$*" s rest=""
+  for s in $standard_args; do
+    case " $given " in *" $s "*) printf '%s ' "$s" ;; esac
+  done
+  for s in $given; do
+    case " $standard_args " in *" $s "*) ;; *) rest="$rest$s"$'\n' ;; esac
+  done
+  [[ -z "$rest" ]] || printf '%s' "$rest" | LC_ALL=C sort | tr '\n' ' '
+}
+
+# A comment block above a module's header is attribution — a credit for vendored third-party work,
+# like a licence header — and nothing else. A URL or one of the words a credit is written with is
+# what tells the two apart; an explanation of the module belongs after the header, where the reader
+# meets it with the code it explains
+is_attribution() { # is_attribution FILE
+  awk '
+    /^#/ { block = block $0 "\n"; next }
+    { exit }
+    END {
+      if (block ~ /https?:\/\//) { print "yes"; exit }
+      if (block ~ /(Author|Copyright|Original|Upstream|Vendored|SPDX)/) { print "yes"; exit }
+      print "no"
+    }
+  ' "$1"
+}
+
+check_header() { # check_header FILE
+  local f="$1" row shape named variadic above after gap formals want
+  row=$(header_facts "$f")
+  shape=$(printf '%s' "$row" | cut -f1)
+  named=$(printf '%s' "$row" | cut -f2)
+  variadic=$(printf '%s' "$row" | cut -f3)
+  above=$(printf '%s' "$row" | cut -f4)
+  after=$(printf '%s' "$row" | cut -f5)
+  gap=$(printf '%s' "$row" | cut -f6)
+  formals=$(printf '%s' "$row" | cut -f7)
+
+  [[ "$shape" == "inline" || "$shape" == "multi" ]] || return 0
+
+  if [[ "$shape" == "multi" ]] && ((named <= 2)); then
+    finding_unless_excused arg-line-shape "$f" \
+      "$f: $named named arguments are stacked — up to two go on one line"
+  fi
+  if [[ "$shape" == "inline" ]] && ((named >= 3)); then
+    finding_unless_excused arg-line-shape "$f" \
+      "$f: $named named arguments share a line — three and more go one per line"
+  fi
+
+  # Only a module: a package's arguments come in the order nixpkgs writes them — lib, the stdenv,
+  # the fetchers, then what it builds against — and alphabetising them would put fetchFromGitHub
+  # before stdenvNoCC, which no package in nixpkgs or in this family does
+  if ((variadic && named >= 2)); then
+    # shellcheck disable=SC2086 # splitting the formals into arguments is the point
+    want=$(expected_order $formals)
+    # Both sides are space-terminated, so a prefix never matches a longer name
+    if [[ "$formals " != "$want" ]]; then
+      finding_unless_excused module-arg-order "$f" \
+        "$f: arguments are $formals, and the order is ${want% }"
+    fi
+  fi
+
+  # Only a module: a package or a plain function keeps its comment on line 1, which is where a
+  # reader of a file that is not a module looks first
+  if ((variadic)) && ((above)) && [[ "$(is_attribution "$f")" == "no" ]]; then
+    finding_unless_excused file-comment-placement "$f" \
+      "$f: a module's file comment sits above its header — it goes after it, abutting the body"
+  fi
+  if ((gap)); then
+    finding_unless_excused file-comment-placement "$f" \
+      "$f: a blank line holds the file comment off the body it explains"
+  fi
+  if ((after && above && variadic)); then
+    finding_unless_excused file-comment-placement "$f" \
+      "$f: the file comment is in both places at once, above the header and after it"
+  fi
+}
+
 # ---- the run ----------------------------------------------------------------------------------
 unformatted=$(check_nixfmt)
 if [[ -n "$unformatted" ]]; then
   while IFS= read -r f; do
     [[ -n "$f" ]] || continue
-    finding "$f is not formatted by nixfmt — run nix fmt"
+    finding_unless_excused nixfmt-formatted "$f" "$f is not formatted by nixfmt — run nix fmt"
   done <<EOF
 $unformatted
 EOF
@@ -344,7 +542,7 @@ if [[ -n "$statix_rows" ]]; then
     rest="${rest#*:}"
     code="${rest%%:*}"
     msg="${rest#*:}"
-    finding "$f:$line:$col: statix W$code — $msg"
+    finding_unless_excused statix "$f" "$f:$line:$col: statix W$code — $msg"
   done <<EOF
 $statix_rows
 EOF
@@ -354,10 +552,71 @@ dead_rows=$(check_deadnix)
 if [[ -n "$dead_rows" ]]; then
   while IFS= read -r row; do
     [[ -n "$row" ]] || continue
-    finding "$row (deadnix)"
+    finding_unless_excused deadnix "${row%%:*}" "$row (deadnix)"
   done <<EOF
 $dead_rows
 EOF
+fi
+
+# ---- the file names ------------------------------------------------------------------------------
+# Every path in the repository, not only the .nix ones: a theme directory or an asset breaks the
+# convention as readily as a module, and a rename has to find every reference to it. Conventional
+# root metadata is the one shape spelled in capitals on purpose
+kebab_rows=""
+if ((${#paths[@]} == 0)) && git -C "$root" rev-parse --git-dir >/dev/null 2>&1; then
+  kebab_rows=$(git -C "$root" ls-files --cached --others --exclude-standard | awk '
+    {
+      n = split($0, part, "/")
+      for (i = 1; i <= n; i++) {
+        p = part[i]
+        # Conventional metadata is spelled in capitals on purpose, wherever it sits: README.md
+        # beside the code it describes, LICENSE and CLAUDE.md at the root, MEMORY.md in a
+        # directory of its own. The stem has to be capitals throughout, so a CamelCase asset
+        # such as a vendored font is not swept in with them, and only the last component may
+        # take the exemption — a directory in capitals was named without the convention
+        if (i == n && p ~ /^[A-Z][A-Z0-9_-]*(\.[a-z0-9]+)?$/) continue
+        if (p ~ /^\.?[a-z0-9][a-z0-9.-]*$/) continue
+        print $0 "\t" p
+        break
+      }
+    }')
+fi
+if [[ -n "$kebab_rows" ]]; then
+  while IFS=$'\t' read -r path part; do
+    [[ -n "$path" ]] || continue
+    finding_unless_excused file-kebab-case "$path" "$path: \"$part\" is not kebab-case"
+  done <<EOF
+$kebab_rows
+EOF
+fi
+
+# ---- the header, and the with that scopes a whole file ---------------------------------------------
+# nixfmt puts a file-level `with` at column 0 only when a `let ... in` precedes it; the form
+# `{ pkgs, ... }: with pkgs; { … }` it leaves on one line, so the text anchor alone is not enough
+# and the parse form answers the rest
+while IFS= read -r f; do
+  [[ -n "$f" ]] || continue
+  is_generated "$f" && continue
+  if grep -q '^with ' "$f" 2>/dev/null; then
+    finding_unless_excused with-at-file-level "$f" \
+      "$f: a with at the file level — its scope is every name the file goes on to bind"
+  fi
+  is_lambda "$f" || continue
+  check_header "$f"
+done <<EOF
+$files
+EOF
+
+# ---- the excuses, read back --------------------------------------------------------------------
+# An entry that excused nothing this run is a finding of its own. It means either the thing it
+# covered is gone, and the line outlived its reason, or the path stopped matching and the excuse
+# has been silently covering nothing since. Neither is something to discover a year later
+if [[ -s "$work/allow" ]]; then
+  while IFS=$'\t' read -r eid epath; do
+    [[ -n "$eid" ]] || continue
+    grep -qxF "$eid	$epath" "$work/allow.used" ||
+      finding "$allow_file: \"$eid $epath\" excuses nothing — the finding it covered is gone"
+  done <"$work/allow"
 fi
 
 # ---- falsification ------------------------------------------------------------------------------
@@ -368,11 +627,15 @@ fi
 self=$0
 canon="$work/canon"
 
+# A git repository on purpose: the name rule reads the repository's own file list, and the walk
+# that finds the .nix files takes its git branch here rather than the find one, so the plants
+# below exercise the path a consumer actually runs
 build_canon() {
   mkdir -p "$canon/nix"
   template_flake >"$canon/flake.nix"
   template_module >"$canon/module.nix"
   template_package >"$canon/nix/package.nix"
+  git -C "$canon" init -q
 }
 
 nested() { # nested DIR [ARGS...] -> this script on DIR's copy, falsification skipped
@@ -424,6 +687,29 @@ plant_after() { # plant_after DIR FILE AFTER-PATTERN LINE
   mv "$1/$2.new" "$1/$2"
 }
 
+swap_lines() { # swap_lines DIR FILE FIRST SECOND -> the two lines exchanged
+  A="$3" B="$4" awk '
+    $0 == ENVIRON["A"] { print ENVIRON["B"]; next }
+    $0 == ENVIRON["B"] { print ENVIRON["A"]; next }
+    { print }
+  ' "$1/$2" >"$1/$2.new"
+  mv "$1/$2.new" "$1/$2"
+}
+
+collapse_header() { # collapse_header DIR FILE -> a stacked header put back on one line
+  awk '
+    NR == 1 && $0 == "{" { inhdr = 1; line = "{"; next }
+    inhdr && /^\}[[:space:]]*:/ { print line " }:"; inhdr = 0; next }
+    inhdr {
+      gsub(/^[[:space:]]+|,[[:space:]]*$/, "", $0)
+      line = line (line == "{" ? " " : ", ") $0
+      next
+    }
+    { print }
+  ' "$1/$2" >"$1/$2.new"
+  mv "$1/$2.new" "$1/$2"
+}
+
 self_test() {
   build_canon
 
@@ -452,6 +738,44 @@ self_test() {
   c=$(copy deadnix-plant)
   plant_after "$c" module.nix '  pkgs,' '  unusedArgument,'
   expect_red "$c" "Unused lambda pattern: unusedArgument" "an argument nothing reads"
+
+  # A path component that is not kebab-case. It is the file list the repository keeps, not the
+  # .nix walk, so the plant is a file of any kind
+  c=$(copy kebab-plant)
+  : >"$c/Not_Kebab.txt"
+  expect_red "$c" 'is not kebab-case' "a path component in snake case"
+
+  # …and the exemption that keeps a README from being one: the same plant under a name spelled
+  # in capitals throughout must pass, or every repository in the family goes red on its own docs
+  c=$(copy kebab-metadata-plant)
+  : >"$c/NOTES.md"
+  expect_green "$c" "a document named in capitals the way metadata is"
+
+  # A with whose scope is the file. nixfmt only puts it at column 0 after a `let … in`, which the
+  # canon has, so the plant is what a consumer would actually have written
+  c=$(copy with-plant)
+  plant_after "$c" module.nix 'in' 'with pkgs;'
+  expect_red "$c" "a with at the file level" "a with scoping the whole file"
+
+  # The order of a module's arguments, which nixfmt preserves either way and so cannot hold
+  c=$(copy order-plant)
+  swap_lines "$c" module.nix '  config,' '  lib,'
+  expect_red "$c" "and the order is config lib pkgs" "arguments out of their order"
+
+  # Three named arguments on one line, which nixfmt also preserves
+  c=$(copy shape-plant)
+  collapse_header "$c" module.nix
+  expect_red "$c" "share a line" "three arguments sharing a line"
+
+  # The file comment held off the body by a blank line
+  c=$(copy comment-gap-plant)
+  plant_after "$c" module.nix '# argument header and abuts the body' ''
+  expect_red "$c" "holds the file comment off the body" "a blank line between the comment and the body"
+
+  # An excuse that covers nothing is a finding of its own
+  c=$(copy stale-allow-plant)
+  printf 'file-kebab-case No_Such_File.txt\n' >"$c/check-nix.allow"
+  expect_red "$c" "excuses nothing" "an excuse whose finding is gone"
 
   # The refusal itself: a machine without a tool must be refused, never checked with less. The
   # defect goes in the tools rather than in the text, which is the one thing a planted line
