@@ -40,7 +40,9 @@ in a repository's own gate
   --list-rules print every rule with its tier and mechanism, and exit
 
 Environment: CHECK_NIX_NESTED=1 runs the checks and skips the self-test, which is how a
-gate that calls this more than once avoids proving the same copy twice
+gate that calls this more than once avoids proving the same copy twice. CHECK_NIX_GOLDEN
+set to anything makes the pinned shape of the parser's output deliberately wrong, which
+is how the self-test proves the refusal that shape is pinned by
 Nothing here reaches the network
 Exit 0 when clean, 1 with one `check-nix: <what>` line per finding, 2 on a usage error,
 an unreadable path, a missing tool, a tool whose output shape moved, or nothing to check
@@ -65,6 +67,12 @@ with-at-file-level	text	a with whose scope is the whole file body
 module-arg-order	header	formals not in the order: the standard ones, the rest alphabetically, then ...
 arg-line-shape	header	up to two named formals split across lines, or three and more on one
 file-comment-placement	header	a module's file comment above its header, or held off its body by a blank line
+with-over-let	tree	a with whose body binds names of its own
+lookup-path	tree	<nixpkgs> or NIX_PATH, which read the machine rather than the lock
+pkgs-lib-with-lib-arg	tree	pkgs.lib where lib is already an argument
+self-src-unwrapped	tree	a derivation src taken straight from inputs.self
+derivation-meta	tree	a derivation with no meta
+default-nix-imports-only	tree	a default.nix that binds anything but imports
 EOF
 }
 
@@ -258,6 +266,52 @@ tool_preflight() {
 }
 tool_preflight
 
+# The canonical form nix-instantiate --parse prints is documented nowhere, and every rule that
+# reads the tree greps it. So before a rule reads a line, one expression holding every construct
+# those rules look for is parsed and compared to the line it produced when they were written. A
+# release that moves the printer stops the run and shows what it printed instead, rather than
+# passing a check that has quietly stopped looking at anything
+tree_probe() {
+  cat <<'EOF'
+{ inputs, lib, pkgs, ... }:
+{
+  a = with pkgs; [ jq ];
+  b = with lib; let c = 1; in c;
+  d = pkgs.lib.mkForce 1;
+  e = import <nixpkgs> { };
+  f = "a {brace} b";
+  g = pkgs.stdenvNoCC.mkDerivation { src = "${inputs.self}/assets"; meta = { }; };
+}
+EOF
+}
+
+tree_golden() {
+  # The one hook a test needs: a golden that deliberately no longer describes the printer, so the
+  # refusal below can be proven able to fire on a machine where the printer has not in fact moved
+  [[ -z "${CHECK_NIX_GOLDEN:-}" ]] || {
+    printf 'a line the printer would never print\n'
+    return 0
+  }
+  cat <<'EOF'
+({ inputs, lib, pkgs, ... }: { a = (with pkgs; [ (jq) ]); b = (with lib; (let c = 1; in c)); d = ((pkgs).lib.mkForce 1); e = (import (__findFile __nixPath "nixpkgs") { }); f = "a {brace} b"; g = ((pkgs).stdenvNoCC.mkDerivation { meta = { }; src = ((inputs).self + "/assets"); }); })
+EOF
+}
+
+tree_preflight() {
+  tree_probe >"$work/probe.nix"
+  nix-instantiate --parse "$work/probe.nix" >"$work/probe.out" 2>"$work/probe.err" ||
+    die "nix-instantiate could not read the built-in probe: $(tr '\n' ' ' <"$work/probe.err")"
+  tree_golden >"$work/probe.want"
+  cmp -s "$work/probe.out" "$work/probe.want" || {
+    printf 'check-nix: the tree printed by %s is not the one tree_golden describes — either the printer moved or the golden did\n' \
+      "$(nix-instantiate --version 2>/dev/null || echo 'nix, version unknown')" >&2
+    printf 'check-nix: the probe printed this instead, which is what tree_golden would become:\n' >&2
+    sed 's/^/  /' "$work/probe.out" >&2
+    exit 2
+  }
+}
+tree_preflight
+
 # The two statix lints that fight module Nix, disabled for every repository at once rather
 # than argued about in each. empty_pattern wants `_:` where a NixOS module's signature is
 # `{ ... }:`, which is what nixpkgs and every module in this family writes. repeated_keys
@@ -393,6 +447,68 @@ is_lambda() { # is_lambda FILE — does the file evaluate to a function taking f
   return 1
 }
 
+# Walks the canonical line with { } [ ] ( ) depth and skips over "…" strings, so a brace inside a
+# string is not a nesting level. Two questions are asked of it: which keys the body attrset binds
+# at its own level, and what the body opens with once the lambda header is out of the way
+# A Nix identifier may hold an apostrophe, and this reads `foo'` as `foo` and gives up on a
+# `@ args'` binding. Both are legal and neither appears in the family; both fail towards a
+# finding rather than towards silence, which is the direction an unhandled shape has to fail in
+# shellcheck disable=SC2016 # $0 here is awk's record, and not expanding it is the whole point
+body_awk='
+  function skip_lambda(s,   n, i, j, d, c, rest) {
+    n = length(s); i = 1
+    while (i <= n && substr(s, i, 1) == "(") i++
+    if (substr(s, i, 1) != "{") return substr(s, i)
+    j = i; d = 0
+    while (j <= n) {
+      c = substr(s, j, 1)
+      if (c == "{") d++
+      else if (c == "}") { d--; if (d == 0) break }
+      j++
+    }
+    rest = substr(s, j + 1)
+    if (rest !~ /^[[:space:]]*(@[[:space:]]*[A-Za-z_][A-Za-z0-9_-]*[[:space:]]*)?:/) return substr(s, i)
+    sub(/^[[:space:]]*(@[[:space:]]*[A-Za-z_][A-Za-z0-9_-]*[[:space:]]*)?:[[:space:]]*/, "", rest)
+    return rest
+  }
+  {
+    body = skip_lambda($0)
+    if (MODE == "head") { print substr(body, 1, 6); exit }
+    n = length(body); i = 1
+    while (i <= n && substr(body, i, 1) == "(") i++
+    if (substr(body, i, 1) != "{") { print "NOT-AN-ATTRSET"; exit }
+    i++
+    depth = 0; instr = 0; word = ""
+    while (i <= n) {
+      c = substr(body, i, 1)
+      if (instr) {
+        if (c == "\\") i++
+        else if (c == "\"") instr = 0
+        i++; continue
+      }
+      if (c == "\"") { instr = 1; i++; continue }
+      if (c == "{" || c == "[" || c == "(") { depth++; word = ""; i++; continue }
+      if (c == "}" || c == "]" || c == ")") {
+        if (c == "}" && depth == 0) break
+        depth--; word = ""; i++; continue
+      }
+      if (depth == 0) {
+        if (c ~ /[A-Za-z0-9_.-]/) { word = word c; i++; continue }
+        if (c == "=" && word != "") { split(word, seg, "."); print seg[1]; word = ""; i++; continue }
+        if (c == ";") { word = ""; i++; continue }
+      }
+      i++
+    }
+  }'
+
+body_keys() { # body_keys FILE -> the keys the body attrset binds at its own level
+  tree_of "$1" | awk -v MODE=keys "$body_awk"
+}
+
+body_head() { # body_head FILE -> the first six characters of the body, the lambda header gone
+  tree_of "$1" | awk -v MODE=head "$body_awk"
+}
+
 # ---- the header ----------------------------------------------------------------------------------
 # The one region where text can be read without a lexer: before the first `}:` there are no strings
 # and no nesting, measured across every .nix file in the family. The awk emits one row —
@@ -464,6 +580,86 @@ is_attribution() { # is_attribution FILE
       print "no"
     }
   ' "$1"
+}
+
+# ---- the tree's own rules ---------------------------------------------------------------------
+# Everything here reads the canonical line, where comments are gone and layout is normalised, so a
+# rule is about the expression rather than about how it was typed. The forms grepped for are the
+# ones tree_probe pins: a release of Nix that moves them stops the run rather than passing it
+check_tree() { # check_tree FILE
+  local f="$1" tree keys
+  tree=$(tree_of "$f")
+  [[ -n "$tree" ]] || return 0
+
+  # A with whose scope is the file body. nixfmt writes the `let … in with` form at column 0, which
+  # the text anchor catches; the form that shares the header's line only shows here
+  if [[ "$(body_head "$f")" == "(with "* ]]; then
+    finding_unless_excused with-at-file-level "$f" \
+      "$f: a with at the file level — its scope is every name the file goes on to bind"
+  fi
+
+  case "$tree" in
+    *"; (let "*)
+      # A with over a let is the shape the ban is really about: the body grows bindings, and each
+      # one silently takes a name the with was opening
+      case "$tree" in
+        *"with "*"; (let "*)
+          finding_unless_excused with-over-let "$f" \
+            "$f: a with over a let — a binding added below silently takes a name the with opened"
+          ;;
+      esac
+      ;;
+  esac
+
+  # `<nixpkgs>` parses to __findFile __nixPath, and NIX_PATH is read by name. Both make the
+  # evaluation depend on the machine it runs on, which is the one thing a flake exists to stop
+  case "$tree" in
+    *"__findFile __nixPath"* | *'getEnv "NIX_PATH"'*)
+      finding_unless_excused lookup-path "$f" \
+        "$f: a lookup path or NIX_PATH — the evaluation then depends on the machine it runs on"
+      ;;
+  esac
+
+  # `pkgs.lib` where lib is already an argument: two names for one thing, and the longer one is
+  # the one that stops being obviously the same lib as soon as an overlay is in play
+  if [[ "$tree" == *"(pkgs).lib."* ]] && [[ " $(header_facts "$f" | cut -f7) " == *" lib "* ]]; then
+    finding_unless_excused pkgs-lib-with-lib-arg "$f" \
+      "$f: pkgs.lib where lib is already an argument — call it lib"
+  fi
+
+  # A repository asset reaching a derivation as a plain string ties that derivation's hash to the
+  # whole repository, so every commit rebuilds it. builtins.path with a fixed name is the isolation
+  case "$tree" in
+    *'src = ((inputs).self + '* | *'src = ((self + '* | *'src = (self + '*)
+      finding_unless_excused self-src-unwrapped "$f" \
+        "$f: a derivation takes its src straight from inputs.self — wrap it in builtins.path with a fixed name, or every commit rebuilds it"
+      ;;
+  esac
+
+  # A derivation with no meta at all. The heuristic is deliberately narrow: an inline derivation
+  # inside a module and a runCommand in a flake are not found here, and extending it to every
+  # mkDerivation anywhere would fire on the throwaway derivations a wrapper builds
+  case "$tree" in
+    *mkDerivation* | *buildGoModule* | *buildRustPackage* | *buildPythonPackage* | *buildNpmPackage*)
+      case "$tree" in
+        *" meta = "*) ;;
+        *)
+          finding_unless_excused derivation-meta "$f" \
+            "$f: a derivation with no meta — a package says what it is, who may use it and where it runs"
+          ;;
+      esac
+      ;;
+  esac
+
+  # default.nix is reserved for aggregators. The repository's own root is the exception: there it
+  # is the entry a bare `nix-build` reaches for, not a list of modules
+  if [[ "$(basename "$f")" == "default.nix" ]] && [[ "$(dirname "$f")" != "$root" ]]; then
+    keys=$(body_keys "$f" | tr '\n' ' ')
+    if [[ "$keys" != "imports " ]]; then
+      finding_unless_excused default-nix-imports-only "$f" \
+        "$f: a default.nix binding ${keys:-nothing but a let} — it is reserved for aggregators that only import"
+    fi
+  fi
 }
 
 check_header() { # check_header FILE
@@ -601,6 +797,7 @@ while IFS= read -r f; do
     finding_unless_excused with-at-file-level "$f" \
       "$f: a with at the file level — its scope is every name the file goes on to bind"
   fi
+  check_tree "$f"
   is_lambda "$f" || continue
   check_header "$f"
 done <<EOF
@@ -776,6 +973,52 @@ self_test() {
   c=$(copy stale-allow-plant)
   printf 'file-kebab-case No_Such_File.txt\n' >"$c/check-nix.allow"
   expect_red "$c" "excuses nothing" "an excuse whose finding is gone"
+
+  # The tree's own rules. Each plant is a whole file rather than an edit to the canon, so the
+  # fixture says plainly what shape it is about and nothing else in it can fire first
+  c=$(copy aggregator-plant)
+  mkdir -p "$c/sub"
+  printf '{ ... }:\n{\n  imports = [ ];\n  services.thing.enable = true;\n}\n' >"$c/sub/default.nix"
+  expect_red "$c" "reserved for aggregators" "a default.nix that also configures something"
+
+  c=$(copy aggregator-clean-plant)
+  mkdir -p "$c/sub"
+  printf '{ ... }:\n{\n  imports = [ ];\n}\n' >"$c/sub/default.nix"
+  expect_green "$c" "a default.nix that only imports"
+
+  c=$(copy with-over-let-plant)
+  printf '{ lib, ... }:\n{\n  a = with lib; let b = 1; in b;\n}\n' >"$c/scoped.nix"
+  expect_red "$c" "a with over a let" "a with whose body binds names of its own"
+
+  c=$(copy lookup-path-plant)
+  printf '{ ... }:\n{\n  a = import <nixpkgs> { };\n}\n' >"$c/looked.nix"
+  expect_red "$c" "a lookup path or NIX_PATH" "a lookup path"
+
+  c=$(copy pkgs-lib-plant)
+  printf '{ lib, pkgs, ... }:\n{\n  a = pkgs.lib.mkForce 1;\n  b = lib.mkDefault 2;\n}\n' >"$c/forced.nix"
+  expect_red "$c" "pkgs.lib where lib is already an argument" "pkgs.lib beside a lib argument"
+
+  c=$(copy self-src-plant)
+  # shellcheck disable=SC2016 # ${inputs.self} is Nix interpolation in the planted file, not this shell's
+  printf '{ inputs, pkgs, ... }:\n{\n  a = pkgs.stdenvNoCC.mkDerivation {\n    pname = "x";\n    version = "1";\n    src = "${inputs.self}/assets";\n    meta.description = "X";\n  };\n}\n' >"$c/vendored.nix"
+  expect_red "$c" "straight from inputs.self" "a derivation src that is the whole repository"
+
+  c=$(copy no-meta-plant)
+  printf '{ pkgs, ... }:\n{\n  a = pkgs.stdenvNoCC.mkDerivation {\n    pname = "x";\n    version = "1";\n  };\n}\n' >"$c/bare.nix"
+  expect_red "$c" "a derivation with no meta" "a derivation that says nothing about itself"
+
+  # The printer the tree rules read is not documented, so the shape it prints is pinned. This asks
+  # the refusal rather than the rule: a golden that no longer describes the printer must stop the
+  # run, and the check that it does is the one thing tree_preflight cannot prove about itself
+  local out status=0
+  out=$(CHECK_NIX_NESTED=1 CHECK_NIX_GOLDEN=moved "$BASH" "$self" -C "$canon" 2>&1) || status=$?
+  ((status == 2)) ||
+    die "self-test: a golden that no longer matches the printer did not stop the run (got $status): $out"
+  case "$out" in
+    *"is not the one tree_golden describes"*) ;;
+    *) die "self-test: a moved golden was refused for the wrong reason: $out" ;;
+  esac
+  planted=$((planted + 1))
 
   # The refusal itself: a machine without a tool must be refused, never checked with less. The
   # defect goes in the tools rather than in the text, which is the one thing a planted line
