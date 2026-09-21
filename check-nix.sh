@@ -73,6 +73,10 @@ pkgs-lib-with-lib-arg	tree	pkgs.lib where lib is already an argument
 self-src-unwrapped	tree	a derivation src taken straight from inputs.self
 derivation-meta	tree	a derivation with no meta
 default-nix-imports-only	tree	a default.nix that binds anything but imports
+lock-no-local-input	lock	an input locked to an absolute path on one machine
+flake-formatter	eval	a flake with no formatter, or one that is not nixfmt-tree
+meta-description-grammar	eval	a package whose meta.description breaks the grammar nixpkgs asks for
+meta-license	eval	a package with no meta.license
 EOF
 }
 
@@ -1007,6 +1011,47 @@ self_test() {
   printf '{ pkgs, ... }:\n{\n  a = pkgs.stdenvNoCC.mkDerivation {\n    pname = "x";\n    version = "1";\n  };\n}\n' >"$c/bare.nix"
   expect_red "$c" "a derivation with no meta" "a derivation that says nothing about itself"
 
+  # An input locked to a path on one machine. Two nodes, because a lock with fewer is a lock this
+  # is reading wrong, and that refusal is a different one
+  c=$(copy local-input-plant)
+  cat >"$c/flake.lock" <<'LOCK'
+{
+  "nodes": {
+    "local": {
+      "locked": { "type": "path", "path": "/home/someone/dev/thing" },
+      "original": { "type": "path", "path": "/home/someone/dev/thing" }
+    },
+    "root": { "inputs": { "local": "local" } }
+  },
+  "root": "root",
+  "version": 7
+}
+LOCK
+  expect_red "$c" "locked to an absolute local path" "an input pointing at one machine's disk"
+
+  # The grammar meta.description is held to. Only the half that judges is planted: the half that
+  # obtains needs a locked flake and its inputs, and is proven by every green run on a real
+  # repository. Each case runs in a subshell, so the findings it prints do not reach this run's count
+  local judged
+  for judged in \
+    'default	thing	A thing that does things	article:opens with an article' \
+    'default	thing	Does things.	period:ends with a period' \
+    'default	thing	does things	case:starts lowercase' \
+    'default	thing	thing that does things	name:opens with the package'"'"'s own name' \
+    'default	thing	Does things	license:no meta.license'; do
+    local row="${judged%%	*}" rest="${judged#*	}" want
+    row="${judged%	*}"
+    want="${judged##*	}"
+    want="${want#*:}"
+    local out
+    out=$( (printf '%s\n' "$row" | meta_judge) 2>&1 || :)
+    case "$out" in
+      *"$want"*) ;;
+      *) die "self-test: a description this checker should have named was not: wanted \"$want\", got \"$out\"" ;;
+    esac
+    planted=$((planted + 1))
+  done
+
   # The printer the tree rules read is not documented, so the shape it prints is pinned. This asks
   # the refusal rather than the rule: a golden that no longer describes the printer must stop the
   # run, and the check that it does is the one thing tree_preflight cannot prove about itself
@@ -1043,6 +1088,127 @@ self_test() {
   planted=$((planted + 1))
 }
 
+# ---- the lock ----------------------------------------------------------------------------------
+# flake.lock is JSON and nothing else, so this asks it directly and needs neither network nor store
+check_lock() {
+  local lock="$root/flake.lock" nodes
+  [[ -r "$lock" ]] || return 0
+  nodes=$(jq -r '.nodes | length' "$lock" 2>/dev/null) ||
+    die "$lock is not JSON this can read"
+  ((nodes >= 2)) ||
+    die "$lock holds $nodes nodes — this is reading the wrong shape, not an empty lock"
+
+  # A dev override — url = "path:/home/…" while an input is worked on locally — reaches the lock
+  # through an ordinary `git add -A` and then breaks the repository on every machine but one.
+  # Relative paths are left alone: those are subflakes of this repository and travel with it
+  local bad
+  bad=$(jq -r '
+    .nodes | to_entries[] | .key as $name
+    | [(.value.locked // {}), (.value.original // {})][]
+    | select(((.type? == "path") and ((.path? // "") | startswith("/")))
+             or ((.type? == "git") and ((.url? // "") | startswith("file:///"))))
+    | $name
+  ' "$lock" | sort -u)
+  local n
+  for n in $bad; do
+    finding_unless_excused lock-no-local-input "$lock" \
+      "$lock: \"$n\" is locked to an absolute local path — a dev override reached the lock, and no other machine has it"
+  done
+}
+
+# ---- what only the evaluation knows ----------------------------------------------------------
+# These ask the flake for values rather than for text, so they need its inputs — which the nix
+# flake check sandbox has neither the network nor the store to fetch. --static leaves them out and
+# says so; the run that has them is a plain CI step beside the one in the sandbox
+meta_judge() { # meta_judge — reads the evaluated packages as JSON on stdin
+  local attr pname description license row
+  while IFS=$'\t' read -r attr pname description license; do
+    [[ -n "$attr" ]] || continue
+    row="$root#packages.$attr"
+    if [[ -z "$description" ]]; then
+      finding_unless_excused meta-description-grammar "$row" \
+        "$row: no meta.description — a package says in one sentence what it is"
+    else
+      case "$description" in
+        [a-z]*) finding_unless_excused meta-description-grammar "$row" \
+          "$row: meta.description starts lowercase: \"$description\"" ;;
+      esac
+      case "$description" in
+        *.) finding_unless_excused meta-description-grammar "$row" \
+          "$row: meta.description ends with a period: \"$description\"" ;;
+      esac
+      case "$description" in
+        "A "* | "An "* | "The "*) finding_unless_excused meta-description-grammar "$row" \
+          "$row: meta.description opens with an article: \"$description\"" ;;
+      esac
+      case "$description" in
+        "$pname"*) finding_unless_excused meta-description-grammar "$row" \
+          "$row: meta.description opens with the package's own name: \"$description\"" ;;
+      esac
+    fi
+    [[ -n "$license" ]] ||
+      finding_unless_excused meta-license "$row" \
+        "$row: no meta.license — what a package may be used for is not a detail"
+  done
+}
+
+unforced=0 # outputs whose value needed inputs this machine does not hold
+
+check_eval() {
+  [[ -r "$root/flake.nix" ]] || return 0
+  local system outs name packages
+  system=$(nix config show system 2>/dev/null) || system=""
+  [[ -n "$system" ]] || die "nix could not say what system this is"
+
+  # --offline throughout, because the help promises this reaches no network. The names of a
+  # flake's outputs evaluate without forcing its inputs, so whether a formatter is declared can
+  # be asked of any flake; what it evaluates to cannot, and that half is skipped and said aloud
+  outs=$(nix eval --offline --impure --json --expr "builtins.attrNames (builtins.getFlake \"$root\")" 2>/dev/null) ||
+    {
+      unforced=1
+      return 0
+    }
+  case "$outs" in
+    *'"formatter"'*)
+      if name=$(nix eval --offline --no-write-lock-file --raw "$root#formatter.$system.name" 2>/dev/null); then
+        case "$name" in
+          nixfmt-tree-*) ;;
+          *) finding_unless_excused flake-formatter "$root/flake.nix" \
+            "$root/flake.nix: formatter is $name — the family's is nixfmt-tree, which walks a whole tree rather than the files it is handed" ;;
+        esac
+      else
+        unforced=1
+      fi
+      ;;
+    *)
+      finding_unless_excused flake-formatter "$root/flake.nix" \
+        "$root/flake.nix: no formatter output — nix fmt then does nothing and CI has nothing to run"
+      ;;
+  esac
+
+  case "$outs" in
+    *'"packages"'*) ;;
+    # A flake with no packages is not a finding: a module or a skill repository has none
+    *) return 0 ;;
+  esac
+  packages=$(nix eval --offline --no-write-lock-file --json "$root#packages.$system" --apply '
+    ps: builtins.mapAttrs (n: p: {
+      pname = p.pname or n;
+      description = p.meta.description or "";
+      license = p.meta.license.spdxId or (p.meta.license.shortName or "");
+    }) ps' 2>/dev/null) || {
+    unforced=1
+    return 0
+  }
+  printf '%s' "$packages" |
+    jq -r 'to_entries[] | [.key, .value.pname, .value.description, .value.license] | @tsv' |
+    meta_judge
+}
+
+check_lock
+((static)) || check_eval
+
+# Last, so every rule it plants a defect against is defined and every real finding is already out
 [[ -n "${CHECK_NIX_NESTED:-}" ]] || self_test
 
 rule_count=$(rules | grep -c .)
@@ -1050,6 +1216,7 @@ noun="files"
 ((file_count != 1)) || noun="file"
 summary="check-nix: $file_count .nix $noun, 3 tools, $rule_count rules"
 ((static == 0)) || summary="$summary; --static, so nothing that evaluates the flake ran"
+((unforced == 0)) || summary="$summary; an output needed inputs this machine does not hold, so what it evaluates to went unchecked"
 ((planted == 0)) || summary="$summary; $planted planted defects caught"
 printf '%s\n' "$summary" >&2
 
