@@ -209,9 +209,14 @@ printf '%s\n' "$summary_rows" | grep -v '^[[:space:]]*$' || :
 if [[ -s "$work/moved" ]] && command -v nix-diff >/dev/null 2>&1; then
   while IFS=$'\t' read -r attr was now; do
     printf '\n== %s\n' "$attr" >&2
-    # To a file first, then the head of it: a pipe into head kills nix-diff with SIGPIPE
+    # To a file first, then the head of it: a pipe into head kills nix-diff with SIGPIPE.
+    # Twelve lines, because a derivation whose source text moved makes nix-diff print that
+    # text, and the whole of a script is not an explanation of anything
     nix-diff "$was" "$now" >"$work/explain" 2>&1 || :
-    awk 'NR <= 40' "$work/explain" >&2
+    awk -v cmd="nix-diff $was $now" '
+      NR <= 12 { print }
+      END { if (NR > 12) printf "  …%d more lines: %s\n", NR - 12, cmd }
+    ' "$work/explain" >&2
   done <"$work/moved"
 elif [[ -s "$work/moved" ]]; then
   printf '\ndrv-diff: nix-diff is not on PATH, so only the move is reported and not its cause\n' >&2
