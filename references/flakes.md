@@ -35,13 +35,13 @@ An input that pins its own `nixpkgs` and warns when overridden is a legitimate s
 While an input is being worked on locally it is tempting to point at the checkout:
 
 ```nix
-inputs.some-tool.url = "path:/home/<user>/Projects/some-tool";
+inputs.some-tool.url = "path:/srv/checkouts/some-tool";
 ```
 
-That absolute path lands in `flake.lock`, and an ordinary `git add -A` commits it. Every other machine then fails on it:
+That absolute path lands in `flake.lock`, and an ordinary `git add -A` commits it. In practice the path is usually under a home directory, which narrows it to one account as well as one machine. Every other machine then fails on it:
 
 ```
-error: path '/home/<user>/Projects/some-tool' does not exist
+error: path '/srv/checkouts/some-tool' does not exist
 ```
 
 The machine that wrote it keeps working, because the content is already in its store and the path is no longer needed to find it. So the break is invisible where it was made and visible only to everyone else
