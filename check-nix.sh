@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Other repositories take this file through the vendoring cascade (references/bump-cascade.md
-# in https://github.com/rokokol/ci-skill): a copy is never edited in place, a change is made
-# here and reaches them from here
-# Needs bash 3.2 and POSIX tools only for its own code, so it runs on a macOS runner
-# unchanged, plus nixfmt, statix, deadnix, jq, nix-instantiate and git for the Nix it is
-# given. That Nix is read three ways: as text after nixfmt, as the tree nix-instantiate
-# re-prints, and as the JSON flake.lock already is. There is no degraded mode — a Nix
-# repository has nix by definition, and a missing linter is a refusal rather than a
-# quieter run
+# in https://github.com/rokokol/ci-skill). Nobody edits a copy in place. A change happens
+# here, and it reaches them from here.
+# Its own code needs bash 3.2 and POSIX tools only, so a macOS runner runs it unchanged.
+# To read the Nix it gets, it also needs nixfmt, statix, deadnix, jq, nix-instantiate and git.
+# It reads that Nix three ways: as text after nixfmt, as the tree nix-instantiate re-prints,
+# and as the JSON that flake.lock already is.
+# There is no degraded mode. A Nix repository holds nix by definition, and a missing linter
+# stops the run rather than shortens it
 set -euo pipefail
 
 usage() {
@@ -93,8 +93,8 @@ template_module() {
   ...
 }:
 
-# What this module is for and why it is arranged this way — the comment sits after the
-# argument header and abuts the body, so the reader meets it before the first attribute
+# What this module is for, and why it has this arrangement. The comment sits after the
+# argument header and abuts the body. The reader meets it before the first attribute
 let
   cfg = config.example.thing;
 in
@@ -129,8 +129,8 @@ template_package() {
   fetchFromGitHub,
 }:
 
-# Why this package lives here rather than coming from nixpkgs — a derivation carries the
-# reason for its own existence, and meta carries everything a reader needs after that
+# Why this package lives here, and does not come from nixpkgs. A derivation carries the
+# reason for its own existence, and meta carries what a reader needs after that
 stdenvNoCC.mkDerivation (finalAttrs: {
   pname = "example";
   version = "1.0.0";
@@ -259,9 +259,10 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/check-nix.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 
 # ---- the tools ----------------------------------------------------------------------------
-# Run before a single rule reads a line, so a machine without a tool is refused rather than
-# quietly checked with less. Degrading on a missing tool was rejected: an extractor that
-# finds nothing must never read as "nothing drifted"
+# This runs before a single rule reads a line. It refuses a machine without a tool, and it
+# never checks that machine with less.
+# A shorter run on a missing tool lost the argument: an extractor that finds nothing must
+# never read as "nothing drifted"
 tool_preflight() {
   local missing=""
   local t
@@ -273,11 +274,11 @@ tool_preflight() {
 }
 tool_preflight
 
-# The canonical form nix-instantiate --parse prints is documented nowhere, and every rule that
-# reads the tree greps it. So before a rule reads a line, one expression holding every construct
-# those rules look for is parsed and compared to the line it produced when they were written. A
-# release that moves the printer stops the run and shows what it printed instead, rather than
-# passing a check that has quietly stopped looking at anything
+# No document describes the canonical form nix-instantiate --parse prints, and every rule
+# that reads the tree greps it. So one expression holds every construct those rules look
+# for. This parses it and compares the line against the one it gave when somebody wrote them.
+# A release that moves the printer stops the run and shows what it printed instead.
+# It never passes a check that quietly looks at nothing
 tree_probe() {
   cat <<'EOF'
 { inputs, lib, pkgs, ... }:
@@ -293,8 +294,8 @@ EOF
 }
 
 tree_golden() {
-  # The one hook a test needs: a golden that deliberately no longer describes the printer, so the
-  # refusal below can be proven able to fire on a machine where the printer has not in fact moved
+  # The one hook a test needs: a golden that deliberately no longer describes the printer.
+  # The refusal below must be shown able to fire on a machine where the printer did not move
   [[ -z "${CHECK_NIX_GOLDEN:-}" ]] || {
     printf 'a line the printer would never print\n'
     return 0
@@ -319,22 +320,22 @@ tree_preflight() {
 }
 tree_preflight
 
-# One statix lint is disabled for every repository at once rather than argued about in each.
-# repeated_keys wants `services.nginx.enable` and `services.postgresql.enable` folded into a
-# single nested `services`, because their paths share a first segment. In a module that segment
-# is an address into the global option tree rather than a structure the author chose, so the
-# lint groups by a string prefix and not by subject — and the module system merges definitions
-# across files anyway, which is what the nesting would be imitating
+# This disables one statix lint for every repository at once. Each repository does not argue
+# it again. repeated_keys wants `services.nginx.enable` and `services.postgresql.enable`
+# folded into one nested `services`, because their paths share a first segment.
+# In a module that segment is an address into the global option tree. The author did not
+# choose it as a structure, so the lint groups by a string prefix and not by subject.
+# The module system also merges definitions across files, which is what the nesting imitates
 cat >"$work/statix.toml" <<'EOF'
 disabled = ["repeated_keys"]
 EOF
 
 # ---- the files ----------------------------------------------------------------------------
-# git ls-files rather than find wherever there is a git repository: it already knows what is
-# ignored, and it does not descend into a result symlink pointing at the store. --others with
-# --exclude-standard is what makes a file that is written but not yet staged visible: without
-# it a new module passes here and fails in CI, where the same file is tracked, which is the
-# one failure a gate exists to move earlier rather than later
+# A git repository gets git ls-files, not find. git already knows what it ignores, and it
+# does not descend into a result symlink that points at the store.
+# --others with --exclude-standard makes a file visible that nobody staged yet. Without it a
+# new module passes here and fails in CI, where git tracks the same file.
+# That failure is the one a gate exists to move earlier
 nix_files() {
   if ((${#paths[@]})); then
     printf '%s\n' "${paths[@]}"
@@ -350,8 +351,8 @@ files=$(nix_files)
 file_count=$(printf '%s\n' "$files" | grep -c .)
 
 # ---- delegated: nixfmt ---------------------------------------------------------------------
-# Not `nix fmt -- --ci`: the checker also runs over a directory with no flake at all, and a
-# repository's formatter output is the treefmt wrapper around this same binary
+# Not `nix fmt -- --ci`. The checker also runs over a directory with no flake at all, and a
+# repository's formatter output wraps this same binary with treefmt
 check_nixfmt() {
   local f
   printf '%s\n' "$files" | while IFS= read -r f; do
@@ -372,9 +373,10 @@ check_statix() {
 }
 
 # ---- delegated: deadnix ----------------------------------------------------------------------
-# One JSON object per file with a results array; jq flattens it to the same shape the other
-# two report in. The generated file exemption is is_generated's and not restated here: NixOS writes
-# it and a repository does not edit it, so its unused pkgs argument is not anybody's finding
+# One JSON object per file with a results array; jq flattens it to the shape the other two
+# report in. is_generated owns the exemption for a generated file, and this does not restate
+# it. NixOS writes that file and a repository does not edit it, so its unused pkgs argument
+# is nobody's finding
 check_deadnix() {
   local f
   printf '%s\n' "$files" | while IFS= read -r f; do
@@ -387,10 +389,11 @@ check_deadnix() {
 }
 
 # ---- the excuses ---------------------------------------------------------------------------------
-# check-nix.allow holds what a repository knows this checker cannot: `ID PATH [TEXT]` per line, a
-# path ending in / standing for everything under it, as vendor-sync.sh already spells a directory.
-# An entry that excuses nothing is itself a finding — an excuse must not outlive its reason, which
-# is the same rule the standard states about a comment carrying a date instead of a cause
+# check-nix.allow holds what a repository knows and this checker cannot: `ID PATH [TEXT]`
+# per line. A path that ends in / stands for everything under it, as vendor-sync.sh already
+# spells a directory.
+# An entry that excuses nothing is itself a finding. An excuse must not outlive its reason.
+# The standard states the same rule about a comment that carries a date instead of a cause
 allow_file="$root/check-nix.allow"
 : >"$work/allow"
 : >"$work/allow.used"
@@ -430,19 +433,20 @@ finding_unless_excused() { # finding_unless_excused ID PATH MESSAGE
 }
 
 # ---- generated files -------------------------------------------------------------------------
-# NixOS writes hardware-configuration.nix and a repository does not edit it, so its unused pkgs
-# argument, its header and its comments are nobody's finding. The one default exemption there is
+# NixOS writes hardware-configuration.nix and a repository does not edit it. Its unused pkgs
+# argument, its header and its comments are nobody's finding. This is the one exemption by
+# default
 is_generated() { # is_generated FILE
   case "$1" in */hardware-configuration.nix) return 0 ;; esac
   return 1
 }
 
 # ---- the tree ------------------------------------------------------------------------------------
-# nix-instantiate --parse re-prints the parsed expression as canonical Nix on one line, fully
-# parenthesised, with every comment gone and every layout choice normalised. It is this checker's
-# equivalent of `shfmt --to-json`, with one measured limit: it sorts attribute keys and lambda
-# formals alphabetically, so it can answer what a file's shape is but never what order anything
-# was written in. Order is a question for the text
+# nix-instantiate --parse re-prints the parsed expression as canonical Nix on one line. It
+# adds every parenthesis, removes every comment and normalises every layout choice.
+# This is the checker's equivalent of `shfmt --to-json`, and it has one measured limit.
+# It sorts attribute keys and lambda formals alphabetically. So it answers what shape a file
+# has, and never what order anybody wrote it in. Order is a question for the text
 tree_of() { # tree_of FILE -> the canonical line, cached
   local f="$1" cached
   cached="$work/tree.$(printf '%s' "$f" | tr -c 'A-Za-z0-9' '.')"
@@ -455,19 +459,21 @@ is_lambda() { # is_lambda FILE — does the file evaluate to a function taking f
   return 1
 }
 
-# Walks the canonical line with { } [ ] ( ) depth and skips over "…" strings, so a brace inside a
-# string is not a nesting level. Two questions are asked of it: which keys the body attrset binds
-# at its own level, and what the body opens with once the lambda header is out of the way
-# A Nix identifier may hold an apostrophe, and this reads `foo'` as `foo` and gives up on a
-# `@ args'` binding. Both are legal and neither appears in the family; both fail towards a
-# finding rather than towards silence, which is the direction an unhandled shape has to fail in
+# This walks the canonical line with { } [ ] ( ) depth, and it steps over "…" strings.
+# A brace inside a string is therefore not a nesting level.
+# It answers two questions. Which keys does the body attrset bind at its own level? And what
+# does the body open with, once the lambda header is out of the way?
+# A Nix identifier may hold an apostrophe. This reads `foo'` as `foo`, and it gives up on a
+# `@ args'` binding. Both are legal, and neither appears in the family.
+# Both fail towards a finding rather than towards silence, which is the direction an
+# unhandled shape has to fail in
 # shellcheck disable=SC2016 # $0 here is awk's record, and not expanding it is the whole point
 body_awk='
   function skip_lambda(s,   n, i, j, d, c, rest) {
     n = length(s); i = 1
     while (i <= n && substr(s, i, 1) == "(") i++
-    # A module that names none of its arguments is a lambda over a plain identifier, `_: { … }`,
-    # and its head has no braces to walk
+    # A module that names none of its arguments is a lambda over a plain identifier,
+    # `_: { … }`. Its head holds no braces to walk
     rest = substr(s, i)
     if (rest ~ /^[A-Za-z_][A-Za-z0-9_-]*:[[:space:]]/) {
       sub(/^[A-Za-z_][A-Za-z0-9_-]*:[[:space:]]*/, "", rest)
@@ -486,9 +492,9 @@ body_awk='
     sub(/^[[:space:]]*(@[[:space:]]*[A-Za-z_][A-Za-z0-9_-]*[[:space:]]*)?:[[:space:]]*/, "", rest)
     return rest
   }
-  # A module usually binds cfg before its body, so the body sits behind a `let … in`. Stepping
-  # over that is what lets a rule ask about the body of an ordinary module rather than only of
-  # the few that bind nothing
+  # A module usually binds cfg before its body, so the body sits behind a `let … in`.
+  # A step over that lets a rule ask about the body of an ordinary module. Without it a rule
+  # reaches only the few modules that bind nothing
   function skip_lets(s,   n, i, depth, instr, c) {
     while (1) {
       n = length(s); i = 1
@@ -567,9 +573,9 @@ body_awk='
     }
   }'
 
-# Prints the inner text of every list whose own level holds no nested list or attrset, so a
-# plain test can decide what it is made of. Strings are skipped, so a bracket inside one is
-# not read as a list
+# This prints the inner text of every list whose own level holds no nested list or attrset.
+# A plain test can then decide what that list is made of. It steps over strings, so a
+# bracket inside one is not a list
 # shellcheck disable=SC2016 # $0 here is awk's record, and not expanding it is the whole point
 lists_awk='
   {
@@ -623,9 +629,10 @@ body_head() { # body_head FILE -> the first six characters of the body, the lamb
 }
 
 # ---- the header ----------------------------------------------------------------------------------
-# The one region where text can be read without a lexer: before the first `}:` there are no strings
-# and no nesting, measured across every .nix file in the family. The awk emits one row —
-# SHAPE, NAMED, VARIADIC, ABOVE, AFTER, GAP, FORMALS — and every header rule reads it
+# This is the one region a reader can take as text without a lexer. Before the first `}:`
+# there are no strings and no nesting, measured across every .nix file in the family.
+# The awk prints one row — SHAPE, NAMED, VARIADIC, ABOVE, AFTER, GAP, FORMALS — and every
+# header rule reads it
 header_facts() { # header_facts FILE
   awk '
     BEGIN { state = "pre"; shape = "none"; above = 0; named = 0; variadic = 0; after = 0; gap = 0; f = "" }
@@ -663,9 +670,10 @@ header_facts() { # header_facts FILE
   ' "$1"
 }
 
-# The standard module arguments, in the order they come in; everything after them is alphabetical.
-# `...` is always last, and nixfmt keeps whichever of the two line shapes it is given, so both the
-# order and the shape are on the author
+# The standard module arguments, in the order they come in. Everything after them is
+# alphabetical, and `...` is always last.
+# nixfmt keeps whichever of the two line shapes the author writes, so the author owns both
+# the order and the shape
 standard_args="config lib pkgs osConfig"
 
 expected_order() { # expected_order FORMALS... -> the order they should have been written in
@@ -679,10 +687,10 @@ expected_order() { # expected_order FORMALS... -> the order they should have bee
   [[ -z "$rest" ]] || printf '%s' "$rest" | LC_ALL=C sort | tr '\n' ' '
 }
 
-# A comment block above a module's header is attribution — a credit for vendored third-party work,
-# like a licence header — and nothing else. A URL or one of the words a credit is written with is
-# what tells the two apart; an explanation of the module belongs after the header, where the reader
-# meets it with the code it explains
+# A comment block above a module's header is attribution and nothing else. It credits
+# vendored third-party work, as a licence header does.
+# A URL, or one of the words a credit uses, tells the two apart. An explanation of the
+# module belongs after the header, where the reader meets it with the code it explains
 is_attribution() { # is_attribution FILE
   awk '
     /^#/ { block = block $0 "\n"; next }
@@ -696,16 +704,17 @@ is_attribution() { # is_attribution FILE
 }
 
 # ---- the tree's own rules ---------------------------------------------------------------------
-# Everything here reads the canonical line, where comments are gone and layout is normalised, so a
-# rule is about the expression rather than about how it was typed. The forms grepped for are the
-# ones tree_probe pins: a release of Nix that moves them stops the run rather than passing it
+# Everything here reads the canonical line, where no comment survives and the layout is
+# normal. A rule therefore asks about the expression, not about how somebody typed it.
+# tree_probe pins each form these rules grep for. A release of Nix that moves one stops the
+# run, and does not pass it
 check_tree() { # check_tree FILE
   local f="$1" tree keys
   tree=$(tree_of "$f")
   [[ -n "$tree" ]] || return 0
 
-  # A with whose scope is the file body. nixfmt writes the `let … in with` form at column 0, which
-  # the text anchor catches; the form that shares the header's line only shows here
+  # A with whose scope is the file body. nixfmt writes the `let … in with` form at column 0,
+  # and the text anchor catches that one. Only this shows the form on the header's own line
   if [[ "$(body_head "$f")" == "with "* ]]; then
     finding_unless_excused with-at-file-level "$f" \
       "$f: a with at the file level — its scope is every name the file goes on to bind"
@@ -713,8 +722,8 @@ check_tree() { # check_tree FILE
 
   case "$tree" in
     *"; (let "*)
-      # A with over a let is the shape the ban is really about: the body grows bindings, and each
-      # one silently takes a name the with was opening
+      # A with over a let is the shape the ban is really about. The body grows bindings, and
+      # each new one silently takes a name the with opened
       case "$tree" in
         *"with "*"; (let "*)
           finding_unless_excused with-over-let "$f" \
@@ -733,15 +742,16 @@ check_tree() { # check_tree FILE
       ;;
   esac
 
-  # `pkgs.lib` where lib is already an argument: two names for one thing, and the longer one is
-  # the one that stops being obviously the same lib as soon as an overlay is in play
+  # `pkgs.lib` where lib is already an argument gives one thing two names. An overlay then
+  # hides the fact that the longer name is the same lib
   if [[ "$tree" == *"(pkgs).lib."* ]] && [[ " $(header_facts "$f" | cut -f7) " == *" lib "* ]]; then
     finding_unless_excused pkgs-lib-with-lib-arg "$f" \
       "$f: pkgs.lib where lib is already an argument — call it lib"
   fi
 
-  # A repository asset reaching a derivation as a plain string ties that derivation's hash to the
-  # whole repository, so every commit rebuilds it. builtins.path with a fixed name is the isolation
+  # A repository asset that reaches a derivation as a plain string ties that derivation's
+  # hash to the whole repository, so every commit rebuilds it.
+  # builtins.path with a fixed name isolates the asset from the rest
   case "$tree" in
     *'src = ((inputs).self + '* | *'src = ((self + '* | *'src = (self + '*)
       finding_unless_excused self-src-unwrapped "$f" \
@@ -749,9 +759,10 @@ check_tree() { # check_tree FILE
       ;;
   esac
 
-  # A derivation with no meta at all. The heuristic is deliberately narrow: an inline derivation
-  # inside a module and a runCommand in a flake are not found here, and extending it to every
-  # mkDerivation anywhere would fire on the throwaway derivations a wrapper builds
+  # A derivation with no meta at all. The heuristic is narrow on purpose. It does not find an
+  # inline derivation inside a module, nor a runCommand in a flake.
+  # A wider one, over every mkDerivation anywhere, would fire on the throwaway derivations a
+  # wrapper builds
   case "$tree" in
     *mkDerivation* | *buildGoModule* | *buildRustPackage* | *buildPythonPackage* | *buildNpmPackage*)
       case "$tree" in
@@ -764,10 +775,11 @@ check_tree() { # check_tree FILE
       ;;
   esac
 
-  # A list of nothing but pkgs attributes says pkgs once per element. `with pkgs;` says it once
-  # for the list, and the scope it opens is a literal with no bindings of its own — the case the
-  # standard keeps `with` for. A list that mixes pkgs with anything else is left alone: there the
-  # with would change what the other elements mean
+  # A list of nothing but pkgs attributes says pkgs once per element. `with pkgs;` says it
+  # once for the list. The scope it opens is a literal with no bindings of its own, which is
+  # the case the standard keeps `with` for.
+  # A list that mixes pkgs with anything else stays alone. There the with would change what
+  # the other elements mean
   local l
   while IFS= read -r l; do
     [[ -n "$l" ]] || continue
@@ -780,10 +792,10 @@ check_tree() { # check_tree FILE
 $(flat_lists "$f")
 EOF
 
-  # An option declared under a prefix nixpkgs owns collides the day nixpkgs adds a module of
-  # that name, and the collision arrives as a type error in a file that did not change. The
-  # prefixes this repository claims are the ones it says out loud; a repository that declares
-  # options and claims none is told so rather than quietly passed
+  # An option under a prefix nixpkgs owns collides the day nixpkgs adds a module of that
+  # name. The collision then arrives as a type error, in a file that did not change.
+  # A repository claims a prefix out loud. One that declares options and claims none is told
+  # so, and does not pass quietly
   local ns
   for ns in $(option_namespaces "$f"); do
     case " $namespaces " in
@@ -799,8 +811,8 @@ EOF
     break
   done
 
-  # default.nix is reserved for aggregators. The repository's own root is the exception: there it
-  # is the entry a bare `nix-build` reaches for, not a list of modules
+  # default.nix belongs to aggregators. The repository's own root is the exception.
+  # There it is the entry a bare `nix-build` reaches for, and not a list of modules
   if [[ "$(basename "$f")" == "default.nix" ]] && [[ "$(dirname "$f")" != "$root" ]]; then
     keys=$(body_keys "$f" | tr '\n' ' ')
     if [[ "$keys" != "imports " ]]; then
@@ -834,9 +846,10 @@ check_header() { # check_header FILE
       "$f: $named named arguments share a line — three and more go one per line"
   fi
 
-  # Only a module: a package's arguments come in the order nixpkgs writes them — lib, the stdenv,
-  # the fetchers, then what it builds against — and alphabetising them would put fetchFromGitHub
-  # before stdenvNoCC, which no package in nixpkgs or in this family does
+  # Only a module. A package's arguments come in the order nixpkgs writes them: lib, the
+  # stdenv, the fetchers, then what it builds against.
+  # Alphabetical order would put fetchFromGitHub before stdenvNoCC. No package in nixpkgs or
+  # in this family does that
   if ((variadic && named >= 2)); then
     # shellcheck disable=SC2086 # splitting the formals into arguments is the point
     want=$(expected_order $formals)
@@ -847,8 +860,8 @@ check_header() { # check_header FILE
     fi
   fi
 
-  # Only a module: a package or a plain function keeps its comment on line 1, which is where a
-  # reader of a file that is not a module looks first
+  # Only a module. A package or a plain function keeps its comment on line 1. A reader of a
+  # file that is not a module looks there first
   if ((variadic)) && ((above)) && [[ "$(is_attribution "$f")" == "no" ]]; then
     finding_unless_excused file-comment-placement "$f" \
       "$f: a module's file comment sits above its header — it goes after it, abutting the body"
@@ -905,9 +918,9 @@ EOF
 fi
 
 # ---- the file names ------------------------------------------------------------------------------
-# Every path in the repository, not only the .nix ones: a theme directory or an asset breaks the
-# convention as readily as a module, and a rename has to find every reference to it. Conventional
-# root metadata is the one shape spelled in capitals on purpose
+# Every path in the repository, not only the .nix ones. A theme directory or an asset breaks
+# the convention as readily as a module, and a rename must find every reference to it.
+# Conventional root metadata is the one shape in capitals on purpose
 kebab_rows=""
 names_read=0
 if ((${#paths[@]} == 0)) && git -C "$root" rev-parse --git-dir >/dev/null 2>&1; then
@@ -917,11 +930,13 @@ if ((${#paths[@]} == 0)) && git -C "$root" rev-parse --git-dir >/dev/null 2>&1; 
       n = split($0, part, "/")
       for (i = 1; i <= n; i++) {
         p = part[i]
-        # Conventional metadata is spelled in capitals on purpose, wherever it sits: README.md
+        # Conventional metadata takes capitals on purpose, wherever it sits. README.md sits
         # beside the code it describes, LICENSE and CLAUDE.md at the root, MEMORY.md in a
-        # directory of its own. The stem has to be capitals throughout, so a CamelCase asset
-        # such as a vendored font is not swept in with them, and only the last component may
-        # take the exemption — a directory in capitals was named without the convention
+        # directory of its own.
+        # The stem must be capitals throughout, so a CamelCase asset such as a vendored font
+        # does not come in with them.
+        # Only the last component takes the exemption. A directory in capitals got its name
+        # without the convention
         if (i == n && p ~ /^[A-Z][A-Z0-9_-]*(\.[a-z0-9]+)?$/) continue
         if (p ~ /^\.?[a-z0-9][a-z0-9.-]*$/) continue
         print $0 "\t" p
@@ -939,9 +954,9 @@ EOF
 fi
 
 # ---- the header, and the with that scopes a whole file ---------------------------------------------
-# nixfmt puts a file-level `with` at column 0 only when a `let ... in` precedes it; the form
-# `{ pkgs, ... }: with pkgs; { … }` it leaves on one line, so the text anchor alone is not enough
-# and the parse form answers the rest
+# nixfmt puts a file-level `with` at column 0 only when a `let ... in` comes before it. It
+# leaves the form `{ pkgs, ... }: with pkgs; { … }` on one line.
+# So the text anchor alone is not enough, and the parse form answers the rest
 while IFS= read -r f; do
   [[ -n "$f" ]] || continue
   is_generated "$f" && continue
@@ -957,9 +972,10 @@ $files
 EOF
 
 # ---- the excuses, read back --------------------------------------------------------------------
-# An entry that excused nothing this run is a finding of its own. It means either the thing it
-# covered is gone, and the line outlived its reason, or the path stopped matching and the excuse
-# has been silently covering nothing since. Neither is something to discover a year later
+# An entry that excused nothing this run is a finding of its own. It means one of two
+# things. Either the thing it covered is gone, and the line outlived its reason. Or the path
+# no longer matches, and the excuse has covered nothing since.
+# Nobody should find out about either one a year later
 if [[ -s "$work/allow" ]]; then
   while IFS=$'\t' read -r eid epath; do
     [[ -n "$eid" ]] || continue
@@ -969,16 +985,17 @@ if [[ -s "$work/allow" ]]; then
 fi
 
 # ---- falsification ------------------------------------------------------------------------------
-# Every check above is proven able to fail on this run, not on the run that wrote it: a canon is
-# assembled from this script's own templates, confirmed clean, and then one defect per check is
-# planted into a fresh copy, which must be rejected for that defect's own stated reason. A copy
-# that is merely rejected proves nothing — any breakage rejects everything
+# Every check above shows itself able to fail on this run, and not on the run that wrote it.
+# This script's own templates build a canon, and the run confirms the canon clean.
+# It then plants one defect per check into a fresh copy. The checker must reject that copy
+# for the defect's own stated reason.
+# A copy that is merely rejected proves nothing, because any breakage rejects everything
 self=$0
 canon="$work/canon"
 
-# A git repository on purpose: the name rule reads the repository's own file list, and the walk
-# that finds the .nix files takes its git branch here rather than the find one, so the plants
-# below exercise the path a consumer actually runs
+# A git repository on purpose. The name rule reads the repository's own file list. The walk
+# over the .nix files also takes its git branch here, and not the find one.
+# The plants below therefore exercise the path a consumer runs
 build_canon() {
   mkdir -p "$canon/nix"
   template_flake >"$canon/flake.nix"
@@ -992,8 +1009,8 @@ nested() { # nested DIR [ARGS...] -> this script on DIR's copy, falsification sk
   shift
   local mode=()
   ((static == 0)) || mode=(--static)
-  # The canon declares its options under `example`, so the copies are checked as a repository
-  # that has claimed that prefix; the plant that tests an unclaimed one names a different prefix
+  # The canon declares its options under `example`. So each copy runs as a repository that
+  # claimed that prefix. The plant for an unclaimed prefix names a different one
   CHECK_NIX_NESTED=1 "$BASH" "$self" -C "$d" -N example ${mode[@]+"${mode[@]}"} "$@"
 }
 
@@ -1030,8 +1047,8 @@ append() { # append DIR FILE LINE -> the line added at the end of the file
   printf '%s\n' "$3" >>"$1/$2"
 }
 
-# Through the environment rather than -v: awk reads escape sequences in a -v value, so a planted
-# line holding a backslash would arrive changed
+# Through the environment rather than -v. awk reads escape sequences in a -v value, so a
+# planted line that holds a backslash would arrive changed
 plant_after() { # plant_after DIR FILE AFTER-PATTERN LINE
   PAT="$3" LINE="$4" awk '{ print } !done && index($0, ENVIRON["PAT"]) == 1 { print ENVIRON["LINE"]; done = 1 }' \
     "$1/$2" >"$1/$2.new"
@@ -1064,8 +1081,8 @@ collapse_header() { # collapse_header DIR FILE -> a stacked header put back on o
 self_test() {
   build_canon
 
-  # The canon must pass before any plant means anything, and it must be what --template prints,
-  # so a nixfmt or statix release that moves is caught here rather than in a consumer
+  # The canon must pass before any plant means anything, and it must be what --template
+  # prints. This then catches a nixfmt or statix release that moves, and no consumer does
   expect_green "$canon" "the canon this script's own --template prints"
 
   local c
@@ -1079,8 +1096,8 @@ self_test() {
   plant_after "$c" module.nix '  cfg = config.example.thing;' '  lib = lib;'
   expect_red "$c" "statix W3" "a binding statix rewrites with inherit"
 
-  # statix again, from the other side: the one disabled lint must still be disabled, or every
-  # module that sets two options sharing a path prefix fires on the shape of the option tree
+  # statix again, from the other side. The one disabled lint must stay disabled. Otherwise
+  # every module that sets two options under one path prefix fires on the option tree's shape
   c=$(copy statix-disabled-plant)
   printf '_: {\n  services.nginx.enable = true;\n  services.postgresql.enable = true;\n}\n' >"$c/two-services.nix"
   expect_green "$c" "two unrelated options whose paths share a first segment"
@@ -1096,14 +1113,14 @@ self_test() {
   : >"$c/Not_Kebab.txt"
   expect_red "$c" 'is not kebab-case' "a path component in snake case"
 
-  # …and the exemption that keeps a README from being one: the same plant under a name spelled
-  # in capitals throughout must pass, or every repository in the family goes red on its own docs
+  # …and the exemption that keeps a README out of that finding. The same plant under a name
+  # in capitals throughout must pass. Otherwise every repository goes red on its own docs
   c=$(copy kebab-metadata-plant)
   : >"$c/NOTES.md"
   expect_green "$c" "a document named in capitals the way metadata is"
 
-  # A with whose scope is the file. nixfmt only puts it at column 0 after a `let … in`, which the
-  # canon has, so the plant is what a consumer would actually have written
+  # A with whose scope is the file. nixfmt puts it at column 0 only after a `let … in`, and
+  # the canon has one. The plant is therefore what a consumer would have written
   c=$(copy with-plant)
   plant_after "$c" module.nix 'in' 'with pkgs;'
   expect_red "$c" "a with at the file level" "a with scoping the whole file"
@@ -1128,8 +1145,8 @@ self_test() {
   printf 'file-kebab-case No_Such_File.txt\n' >"$c/check-nix.allow"
   expect_red "$c" "excuses nothing" "an excuse whose finding is gone"
 
-  # The tree's own rules. Each plant is a whole file rather than an edit to the canon, so the
-  # fixture says plainly what shape it is about and nothing else in it can fire first
+  # The tree's own rules. Each plant is a whole file, and not an edit to the canon. The
+  # fixture then says plainly what shape it is about, and nothing else in it fires first
   c=$(copy aggregator-plant)
   mkdir -p "$c/sub"
   printf '_: {\n  imports = [ ];\n  services.thing.enable = true;\n}\n' >"$c/sub/default.nix"
@@ -1157,8 +1174,8 @@ self_test() {
   printf '{ inputs, pkgs, ... }:\n{\n  a = pkgs.stdenvNoCC.mkDerivation {\n    pname = "x";\n    version = "1";\n    src = "${inputs.self}/assets";\n    meta.description = "X";\n  };\n}\n' >"$c/vendored.nix"
   expect_red "$c" "straight from inputs.self" "a derivation src that is the whole repository"
 
-  # A list of nothing but pkgs attributes, and its one-element form, which counts the same: the
-  # point is that pkgs is said once for the list rather than once for each thing in it
+  # A list of nothing but pkgs attributes, and its one-element form, which counts the same.
+  # The point is one pkgs for the list, and not one pkgs for each thing in it
   c=$(copy with-pkgs-plant)
   printf '{ pkgs, ... }:\n{\n  a = [\n    pkgs.coreutils\n    pkgs.jq\n  ];\n}\n' >"$c/listed.nix"
   expect_red "$c" "nothing but pkgs attributes" "a list that says pkgs once per element"
@@ -1167,8 +1184,8 @@ self_test() {
   printf '{ pkgs, ... }:\n{\n  a = [ pkgs.jq ];\n}\n' >"$c/single.nix"
   expect_red "$c" "nothing but pkgs attributes" "a one-element list that says pkgs anyway"
 
-  # …and the two shapes it must leave alone: one already written the way the rule asks, and one
-  # mixing pkgs with something else, where the with would change what the other element means
+  # …and the two shapes it must leave alone. One already follows the rule. The other mixes
+  # pkgs with something else, where the with would change what the other element means
   c=$(copy with-pkgs-clean-plant)
   printf '{ lib, pkgs, ... }:\n{\n  a = with pkgs; [\n    coreutils\n    jq\n  ];\n  b = [\n    pkgs.jq\n    lib.fakeHash\n  ];\n}\n' >"$c/fine.nix"
   expect_green "$c" "a list already using with pkgs, and one that mixes pkgs with something else"
@@ -1177,8 +1194,8 @@ self_test() {
   printf '{ pkgs, ... }:\n{\n  a = pkgs.stdenvNoCC.mkDerivation {\n    pname = "x";\n    version = "1";\n  };\n}\n' >"$c/bare.nix"
   expect_red "$c" "a derivation with no meta" "a derivation that says nothing about itself"
 
-  # An input locked to a path on one machine. Two nodes, because a lock with fewer is a lock this
-  # is reading wrong, and that refusal is a different one
+  # An input locked to a path on one machine. Two nodes, because a lock with fewer is one
+  # this checker reads wrong, and that refusal is a different one
   c=$(copy local-input-plant)
   cat >"$c/flake.lock" <<'LOCK'
 {
@@ -1195,9 +1212,10 @@ self_test() {
 LOCK
   expect_red "$c" "locked to an absolute local path" "an input pointing at one machine's disk"
 
-  # The grammar meta.description is held to. Only the half that judges is planted: the half that
-  # obtains needs a locked flake and its inputs, and is proven by every green run on a real
-  # repository. Each case runs in a subshell, so the findings it prints do not reach this run's count
+  # The grammar meta.description must hold to. Only the half that judges gets a plant.
+  # The half that obtains needs a locked flake and its inputs, and every green run on a real
+  # repository proves it.
+  # Each case runs in a subshell, so the findings it prints stay out of this run's count
   local judged
   for judged in \
     'default	thing	A thing that does things	article:opens with an article' \
@@ -1218,9 +1236,10 @@ LOCK
     planted=$((planted + 1))
   done
 
-  # The printer the tree rules read is not documented, so the shape it prints is pinned. This asks
-  # the refusal rather than the rule: a golden that no longer describes the printer must stop the
-  # run, and the check that it does is the one thing tree_preflight cannot prove about itself
+  # No document describes the printer the tree rules read, so the golden pins its shape.
+  # This asks the refusal rather than the rule. A golden that no longer describes the
+  # printer must stop the run. That is the one thing tree_preflight cannot prove about
+  # itself
   local out status=0
   out=$(CHECK_NIX_NESTED=1 CHECK_NIX_GOLDEN=moved "$BASH" "$self" -C "$canon" 2>&1) || status=$?
   ((status == 2)) ||
@@ -1231,17 +1250,18 @@ LOCK
   esac
   planted=$((planted + 1))
 
-  # The refusal itself: a machine without a tool must be refused, never checked with less. The
-  # defect goes in the tools rather than in the text, which is the one thing a planted line
-  # cannot express. Every tool is asked, not one of them: a preflight that quietly stops naming
-  # a tool goes on reporting a clean run while that tool's half of the check does nothing
+  # The refusal itself. The checker must refuse a machine without a tool, and never check it
+  # with less. The defect goes in the tools rather than in the text, which is the one thing a
+  # planted line cannot express.
+  # This asks about every tool, and not about one of them. A preflight that quietly drops a
+  # tool goes on to report a clean run, while that tool's half of the check does nothing
   local tool p oldifs stripped out status
   for tool in nixfmt statix deadnix jq nix-instantiate; do
     stripped=""
     oldifs=$IFS
     IFS=:
-    # Only the PATH entries holding this tool are dropped, so the rest of the userland survives
-    # and the run fails on the tool rather than on a missing mktemp
+    # This drops only the PATH entries that hold this tool, so the rest of the userland
+    # survives. The run then fails on the tool, and not on a missing mktemp
     for p in $PATH; do
       [ -x "$p/$tool" ] || stripped="${stripped:+$stripped:}$p"
     done
@@ -1258,25 +1278,26 @@ LOCK
     planted=$((planted + 1))
   done
 
-  # A generated file is exempt, and the exemption has to keep matching the name NixOS writes.
-  # Without a fixture holding one, an exemption that stops matching anything reads as a clean run
+  # A generated file is exempt, and the exemption must still match the name NixOS writes.
+  # Without a fixture that holds one, an exemption that matches nothing reads as a clean run
   c=$(copy generated-plant)
   printf '{\n  config,\n  lib,\n  modulesPath,\n  unusedByNixos,\n  ...\n}:\n{\n  imports = [ ];\n}\n' \
     >"$c/hardware-configuration.nix"
   expect_green "$c" "a generated hardware-configuration.nix, which a repository does not edit"
 
-  # A list holding an attrset is not a flat list of packages, and the advice about with pkgs
-  # would not compile if it were offered here
+  # A list that holds an attrset is not a flat list of packages. The advice about with pkgs
+  # would not compile here
   c=$(copy nested-list-plant)
   printf '{ pkgs, ... }:\n{\n  a = [ (pkgs.callPackage ./x.nix { }) ];\n}\n' >"$c/nested.nix"
   expect_green "$c" "a list whose element carries an attrset"
 
   # A brace inside a string is not a nesting level. The parser sorts keys, so a binding named
-  # before `options` comes first in the line the tokeniser walks: read its brace as nesting and
-  # `options` is no longer a key of the body, so the finding below stops being made
+  # before `options` comes first in the line the tokeniser walks.
+  # Read its brace as nesting, and `options` is no longer a key of the body. The finding
+  # below then never happens
   c=$(copy string-brace-plant)
-  # The brace is deliberately unpaired: a balanced pair inside a string raises the depth and
-  # lowers it again, so it would leave the walk where it started and prove nothing
+  # The brace has no pair on purpose. A balanced pair inside a string raises the depth and
+  # lowers it again. It would leave the walk where it started, and prove nothing
   printf '{ lib, ... }:\n{\n  a = "an opening brace { on its own";\n  options.services.mine.enable = lib.mkEnableOption "mine";\n}\n' \
     >"$c/braced.nix"
   expect_red "$c" 'declares options under "services"' "a brace in a string before the key that is read"
@@ -1286,15 +1307,15 @@ LOCK
   printf '{ pkgs, ... }: with pkgs;\n{\n  a = jq;\n}\n' >"$c/inline.nix"
   expect_red "$c" "a with at the file level" "a with sharing the argument header's line"
 
-  # An option under a prefix nixpkgs owns, and the same file once the prefix is claimed
+  # An option under a prefix nixpkgs owns, and the same file once a repository claims it
   c=$(copy namespace-plant)
   printf '{ lib, ... }:\n{\n  options.services.mine.enable = lib.mkEnableOption "mine";\n}\n' >"$c/owned.nix"
   expect_red "$c" 'declares options under "services"' "an option under a prefix nixpkgs owns"
 
-  # …and the other half of the rule: a repository that declares options and claims no prefix is
-  # told so, rather than having the whole rule quietly do nothing for want of configuration.
-  # This one bypasses nested(), which always claims the canon's prefix, so it carries the mode
-  # itself — without it the sandbox run tries to evaluate a flake it cannot fetch
+  # …and the other half of the rule. A repository that declares options and claims no prefix
+  # is told so. The whole rule must not quietly do nothing for want of configuration.
+  # This one goes around nested(), which always claims the canon's prefix, so it carries the
+  # mode itself. Without that, the sandbox run tries to evaluate a flake it cannot fetch
   local mode=()
   ((static == 0)) || mode=(--static)
   status=0
@@ -1307,7 +1328,7 @@ LOCK
   esac
   planted=$((planted + 1))
 
-  # A lock this cannot be reading right is a refusal rather than a pass
+  # A lock this checker cannot read right is a refusal rather than a pass
   c=$(copy short-lock-plant)
   printf '{ "nodes": { "root": { "inputs": { } } }, "root": "root", "version": 7 }\n' >"$c/flake.lock"
   status=0
@@ -1320,9 +1341,9 @@ LOCK
   esac
   planted=$((planted + 1))
 
-  # And the summary says what did not run, in each of the two ways it can be short. A shorter
-  # check that reads like a complete one is the failure those sentences exist to prevent, so
-  # each of them is itself checked
+  # And the summary says what did not run, in each of the two ways it can be short.
+  # Those sentences exist to prevent one failure: a shorter check that reads like a complete
+  # one. So each sentence is itself checked
   out=$(CHECK_NIX_NESTED=1 "$BASH" "$self" --static -C "$canon" 2>&1) || :
   case "$out" in
     *"--static, so nothing that evaluates the flake ran"*) ;;
@@ -1330,8 +1351,9 @@ LOCK
   esac
   planted=$((planted + 1))
 
-  # The canon has no lock, so forcing what its formatter evaluates to needs inputs this machine
-  # does not hold — which is the other way a run comes up short, and the other sentence
+  # The canon has no lock. To force what its formatter evaluates to therefore needs inputs
+  # this machine does not hold. That is the other way a run comes up short, and the other
+  # sentence
   if ((static == 0)); then
     out=$(CHECK_NIX_NESTED=1 "$BASH" "$self" -C "$canon" -N example 2>&1) || :
     case "$out" in
@@ -1352,9 +1374,11 @@ check_lock() {
   ((nodes >= 2)) ||
     die "$lock holds $nodes nodes — this is reading the wrong shape, not an empty lock"
 
-  # A dev override — url = "path:/home/…" while an input is worked on locally — reaches the lock
-  # through an ordinary `git add -A` and then breaks the repository on every machine but one.
-  # Relative paths are left alone: those are subflakes of this repository and travel with it
+  # A dev override points an input at a local checkout, as url = "path:/home/…" does. It
+  # reaches the lock through an ordinary `git add -A`, and then breaks the repository on
+  # every machine but one.
+  # A relative path stays alone. Those are subflakes of this repository, and they travel
+  # with it
   local bad
   bad=$(jq -r '
     .nodes | to_entries[] | .key as $name
@@ -1371,9 +1395,10 @@ check_lock() {
 }
 
 # ---- what only the evaluation knows ----------------------------------------------------------
-# These ask the flake for values rather than for text, so they need its inputs — which the nix
-# flake check sandbox has neither the network nor the store to fetch. --static leaves them out and
-# says so; the run that has them is a plain CI step beside the one in the sandbox
+# These ask the flake for values rather than for text, so they need its inputs. The nix
+# flake check sandbox has neither the network nor the store to fetch those.
+# --static leaves these rules out and says so. The run that has the inputs is a plain CI
+# step beside the one in the sandbox
 meta_judge() { # meta_judge — reads the evaluated packages as JSON on stdin
   local attr pname description license row
   while IFS=$'\t' read -r attr pname description license; do
@@ -1414,9 +1439,11 @@ check_eval() {
   system=$(nix config show system 2>/dev/null) || system=""
   [[ -n "$system" ]] || die "nix could not say what system this is"
 
-  # --offline throughout, because the help promises this reaches no network. The names of a
-  # flake's outputs evaluate without forcing its inputs, so whether a formatter is declared can
-  # be asked of any flake; what it evaluates to cannot, and that half is skipped and said aloud
+  # --offline throughout, because the help promises this reaches no network.
+  # The names of a flake's outputs evaluate without a force of its inputs. So any flake can
+  # answer whether it declares a formatter.
+  # What that formatter evaluates to needs the inputs. The run leaves that half out, and
+  # says so aloud
   outs=$(nix eval --offline --impure --json --expr "builtins.attrNames (builtins.getFlake \"$root\")" 2>/dev/null) ||
     {
       unforced=1
@@ -1462,7 +1489,7 @@ check_eval() {
 check_lock
 ((static)) || check_eval
 
-# Last, so every rule it plants a defect against is defined and every real finding is already out
+# Last, so every rule it plants a defect against exists, and every real finding is already out
 [[ -n "${CHECK_NIX_NESTED:-}" ]] || self_test
 
 rule_count=$(rules | grep -c .)
@@ -1471,9 +1498,9 @@ noun="files"
 summary="check-nix: $file_count .nix $noun, 3 tools, $rule_count rules"
 ((static == 0)) || summary="$summary; --static, so nothing that evaluates the flake ran"
 ((unforced == 0)) || summary="$summary; an output needed inputs this machine does not hold, so what it evaluates to went unchecked"
-# The file list comes from the repository itself, so outside one — the nix flake check sandbox is
-# where this happens — there is nothing to hold to the naming convention, and saying nothing about
-# that would read as the names having been checked and found good
+# The file list comes from the repository itself. Outside a repository there is nothing to
+# hold to the naming convention, and the nix flake check sandbox is where that happens.
+# Silence about it would read as names this run checked and found good
 ((names_read || ${#paths[@]})) || summary="$summary; no repository here, so no name was checked"
 ((planted == 0)) || summary="$summary; $planted planted defects caught"
 printf '%s\n' "$summary" >&2
