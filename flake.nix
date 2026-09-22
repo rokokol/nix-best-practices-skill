@@ -49,16 +49,16 @@
         nix-lint =
           pkgs.runCommand "nix-lint"
             {
-              nativeBuildInputs = [
-                pkgs.deadnix
+              nativeBuildInputs = with pkgs; [
+                deadnix
                 # The walk over a repository's own file list is git's, and so is the fixture the
                 # falsification pass builds; neither is here, but the checker refuses a machine
                 # missing a tool it names rather than discovering it halfway through
-                pkgs.git
-                pkgs.jq
-                pkgs.nix
-                pkgs.nixfmt
-                pkgs.statix
+                git
+                jq
+                nix
+                nixfmt
+                statix
               ];
               # Only what the checker reads, so an edit to a document does not rebuild this
               src = lib.fileset.toSource {

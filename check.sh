@@ -29,7 +29,9 @@ check-nix.sh parses under the 3.2 it claims, which is a workflow's job and not t
 
 Environment: CHECK_NIX_NESTED=1 is set for every call after the first, so the checker's
 own falsification pass runs once rather than once per call
-Nothing here touches the network, so it is safe on pull requests
+Only one step reaches anything outside this machine: the nix flake check that builds the
+seam a consumer gets, which substitutes from the binary cache the way any Nix build does.
+Nothing fetches a source, and nothing writes anywhere but a temporary directory
 Exit 0 when everything holds, 1 on a failure or an unknown mode
 EOF
 }
@@ -89,7 +91,9 @@ check_lint() {
   # The same rules through checks.<system>.nix-lint, where there is no network, no store and no
   # repository. It is the shape every consumer runs, so a seam that only works outside the
   # sandbox would be found by them rather than here
-  CHECK_NIX_NESTED=1 nix flake check --offline --no-write-lock-file
+  # Not --offline: that forbids substitution, so the first change to this derivation stops being a
+  # rebuild and becomes a build of the world from source, which is how it was found
+  CHECK_NIX_NESTED=1 nix flake check --no-write-lock-file
 }
 
 check_behaviour() {

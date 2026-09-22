@@ -77,6 +77,7 @@ lock-no-local-input	lock	an input locked to an absolute path on one machine
 flake-formatter	eval	a flake with no formatter, or one that is not nixfmt-tree
 meta-description-grammar	eval	a package whose meta.description breaks the grammar nixpkgs asks for
 meta-license	eval	a package with no meta.license
+list-with-pkgs	tree	a list whose every element is pkgs.something, written without with pkgs
 EOF
 }
 
@@ -505,6 +506,49 @@ body_awk='
     }
   }'
 
+# Prints the inner text of every list whose own level holds no nested list or attrset, so a
+# plain test can decide what it is made of. Strings are skipped, so a bracket inside one is
+# not read as a list
+# shellcheck disable=SC2016 # $0 here is awk's record, and not expanding it is the whole point
+lists_awk='
+  {
+    n = length($0)
+    for (i = 1; i <= n; i++) {
+      c = substr($0, i, 1)
+      if (c == "\"") {
+        i++
+        while (i <= n) { d = substr($0, i, 1); if (d == "\\") i++; else if (d == "\"") break; i++ }
+        continue
+      }
+      if (c != "[") continue
+      depth = 1; j = i + 1; inner = ""; nested = 0
+      while (j <= n && depth > 0) {
+        d = substr($0, j, 1)
+        if (d == "\"") {
+          inner = inner d; j++
+          while (j <= n) {
+            e = substr($0, j, 1); inner = inner e
+            if (e == "\\") { j++; inner = inner substr($0, j, 1) }
+            else if (e == "\"") break
+            j++
+          }
+          j++; continue
+        }
+        if (d == "[") { depth++; nested = 1 }
+        else if (d == "]") { depth--; if (depth == 0) break }
+        else if (d == "{") nested = 1
+        inner = inner d
+        j++
+      }
+      if (!nested && inner != "") print inner
+      i = j
+    }
+  }'
+
+flat_lists() { # flat_lists FILE -> one line per list that holds no nested list or attrset
+  tree_of "$1" | awk "$lists_awk"
+}
+
 body_keys() { # body_keys FILE -> the keys the body attrset binds at its own level
   tree_of "$1" | awk -v MODE=keys "$body_awk"
 }
@@ -654,6 +698,22 @@ check_tree() { # check_tree FILE
       esac
       ;;
   esac
+
+  # A list of nothing but pkgs attributes says pkgs once per element. `with pkgs;` says it once
+  # for the list, and the scope it opens is a literal with no bindings of its own — the case the
+  # standard keeps `with` for. A list that mixes pkgs with anything else is left alone: there the
+  # with would change what the other elements mean
+  local l
+  while IFS= read -r l; do
+    [[ -n "$l" ]] || continue
+    case "$l" in *'((pkgs).'*) ;; *) continue ;; esac
+    grep -qE '^ (\(\(pkgs\)\.[A-Za-z0-9_.-]+\) )+$' <<<"$l" || continue
+    finding_unless_excused list-with-pkgs "$f" \
+      "$f: a list of nothing but pkgs attributes — say it once with \`with pkgs;\` rather than once per element"
+    break
+  done <<EOF
+$(flat_lists "$f")
+EOF
 
   # default.nix is reserved for aggregators. The repository's own root is the exception: there it
   # is the entry a bare `nix-build` reaches for, not a list of modules
@@ -1008,6 +1068,22 @@ self_test() {
   # shellcheck disable=SC2016 # ${inputs.self} is Nix interpolation in the planted file, not this shell's
   printf '{ inputs, pkgs, ... }:\n{\n  a = pkgs.stdenvNoCC.mkDerivation {\n    pname = "x";\n    version = "1";\n    src = "${inputs.self}/assets";\n    meta.description = "X";\n  };\n}\n' >"$c/vendored.nix"
   expect_red "$c" "straight from inputs.self" "a derivation src that is the whole repository"
+
+  # A list of nothing but pkgs attributes, and its one-element form, which counts the same: the
+  # point is that pkgs is said once for the list rather than once for each thing in it
+  c=$(copy with-pkgs-plant)
+  printf '{ pkgs, ... }:\n{\n  a = [\n    pkgs.coreutils\n    pkgs.jq\n  ];\n}\n' >"$c/listed.nix"
+  expect_red "$c" "nothing but pkgs attributes" "a list that says pkgs once per element"
+
+  c=$(copy with-pkgs-one-plant)
+  printf '{ pkgs, ... }:\n{\n  a = [ pkgs.jq ];\n}\n' >"$c/single.nix"
+  expect_red "$c" "nothing but pkgs attributes" "a one-element list that says pkgs anyway"
+
+  # …and the two shapes it must leave alone: one already written the way the rule asks, and one
+  # mixing pkgs with something else, where the with would change what the other element means
+  c=$(copy with-pkgs-clean-plant)
+  printf '{ lib, pkgs, ... }:\n{\n  a = with pkgs; [\n    coreutils\n    jq\n  ];\n  b = [\n    pkgs.jq\n    lib.fakeHash\n  ];\n}\n' >"$c/fine.nix"
+  expect_green "$c" "a list already using with pkgs, and one that mixes pkgs with something else"
 
   c=$(copy no-meta-plant)
   printf '{ pkgs, ... }:\n{\n  a = pkgs.stdenvNoCC.mkDerivation {\n    pname = "x";\n    version = "1";\n  };\n}\n' >"$c/bare.nix"
