@@ -1145,23 +1145,76 @@ LOCK
 
   # The refusal itself: a machine without a tool must be refused, never checked with less. The
   # defect goes in the tools rather than in the text, which is the one thing a planted line
-  # cannot express. Only the PATH entries holding statix are dropped, so the rest of the
-  # userland survives and the run fails on the tool rather than on a missing mktemp
-  local no_statix="" p oldifs
-  oldifs=$IFS
-  IFS=:
-  for p in $PATH; do
-    [ -x "$p/statix" ] || no_statix="${no_statix:+$no_statix:}$p"
-  done
-  IFS=$oldifs
+  # cannot express. Every tool is asked, not one of them: a preflight that quietly stops naming
+  # a tool goes on reporting a clean run while that tool's half of the check does nothing
+  local tool p oldifs stripped out status
+  for tool in nixfmt statix deadnix jq nix-instantiate; do
+    stripped=""
+    oldifs=$IFS
+    IFS=:
+    # Only the PATH entries holding this tool are dropped, so the rest of the userland survives
+    # and the run fails on the tool rather than on a missing mktemp
+    for p in $PATH; do
+      [ -x "$p/$tool" ] || stripped="${stripped:+$stripped:}$p"
+    done
+    IFS=$oldifs
 
-  local out status=0
-  out=$(PATH="$no_statix" CHECK_NIX_NESTED=1 "$BASH" "$self" -C "$canon" 2>&1) || status=$?
+    status=0
+    out=$(PATH="$stripped" CHECK_NIX_NESTED=1 "$BASH" "$self" -C "$canon" 2>&1) || status=$?
+    ((status == 2)) ||
+      die "self-test: a machine without $tool was not refused with exit 2 (got $status): $out"
+    case "$out" in
+      *"needs $tool"*) ;;
+      *) die "self-test: a machine without $tool was refused without naming it: $out" ;;
+    esac
+    planted=$((planted + 1))
+  done
+
+  # A generated file is exempt, and the exemption has to keep matching the name NixOS writes.
+  # Without a fixture holding one, an exemption that stops matching anything reads as a clean run
+  c=$(copy generated-plant)
+  printf '{\n  config,\n  lib,\n  modulesPath,\n  unusedByNixos,\n  ...\n}:\n{\n  imports = [ ];\n}\n' \
+    >"$c/hardware-configuration.nix"
+  expect_green "$c" "a generated hardware-configuration.nix, which a repository does not edit"
+
+  # A list holding an attrset is not a flat list of packages, and the advice about with pkgs
+  # would not compile if it were offered here
+  c=$(copy nested-list-plant)
+  printf '{ pkgs, ... }:\n{\n  a = [ (pkgs.callPackage ./x.nix { }) ];\n}\n' >"$c/nested.nix"
+  expect_green "$c" "a list whose element carries an attrset"
+
+  # A brace inside a string is not a nesting level, and an aggregator holding one is still an
+  # aggregator
+  c=$(copy string-brace-plant)
+  mkdir -p "$c/braced"
+  printf '_: {\n  imports = [ ];\n  # a key whose value holds a brace\n}\n' >"$c/braced/default.nix"
+  printf '{ lib, ... }:\n{\n  a = lib.mkDefault "battery {capacity}%%";\n}\n' >"$c/braced/held.nix"
+  expect_green "$c" "an attribute whose string value holds a brace"
+
+  # The form of `with` that shares the argument header's line, which the text anchor cannot see
+  c=$(copy with-inline-plant)
+  printf '{ pkgs, ... }: with pkgs; {\n  a = jq;\n}\n' >"$c/inline.nix"
+  expect_red "$c" "a with at the file level" "a with sharing the argument header's line"
+
+  # A lock this cannot be reading right is a refusal rather than a pass
+  c=$(copy short-lock-plant)
+  printf '{ "nodes": { "root": { "inputs": { } } }, "root": "root", "version": 7 }\n' >"$c/flake.lock"
+  status=0
+  out=$(nested "$c" 2>&1) || status=$?
   ((status == 2)) ||
-    die "self-test: a machine without statix was not refused with exit 2 (got $status): $out"
+    die "self-test: a lock of one node was not refused with exit 2 (got $status): $out"
   case "$out" in
-    *"needs statix"*) ;;
-    *) die "self-test: a machine without statix was refused without naming statix: $out" ;;
+    *"reading the wrong shape"*) ;;
+    *) die "self-test: a one-node lock was refused for the wrong reason: $out" ;;
+  esac
+  planted=$((planted + 1))
+
+  # And the summary says what did not run. A shorter check that reads like a complete one is the
+  # failure this refuses, so the sentence that prevents it is itself checked
+  out=$(CHECK_NIX_NESTED=1 "$BASH" "$self" --static -C "$canon" 2>&1) || :
+  case "$out" in
+    *"--static, so nothing that evaluates the flake ran"*) ;;
+    *) die "self-test: a --static run did not say the evaluated half was left out: $out" ;;
   esac
   planted=$((planted + 1))
 }
