@@ -51,7 +51,7 @@ cd "$HERE"
 # The scripts this repository owns, as opposed to the ones it vendors.
 # A vendored copy belongs to its source.
 # This repository holds it to one thing: it must stay byte-equal to that source
-own_scripts=(check-nix.sh check.sh tests/defects.sh)
+own_scripts=(check-nix.sh check.sh drv-diff.sh tests/defects.sh)
 
 mode="${1:-all}"
 case "$mode" in
@@ -89,6 +89,7 @@ check_lint() {
   # The variable is still set, for the calls the behaviour half makes below
   ./check-sh.sh check-nix.sh
   CHECK_SH_NESTED=1 ./check-sh.sh check.sh
+  CHECK_SH_NESTED=1 ./check-sh.sh drv-diff.sh
 
   echo "== the skill itself holds to the rules for a skill"
   ./check-skill.sh -n nix-best-practices .
@@ -163,6 +164,45 @@ check_behaviour() {
   if grep -q 'pins its own PATH' "$work/out"; then
     fail "an ordinary copy claimed its PATH was pinned, so five plants were left out for nothing"
   fi
+
+  echo "== drv-diff answers both ways, and refuses what it cannot see"
+  # Its own falsification plants a comment, which must not move anything, and a changed
+  # builder, which must. So one clean run here exercises both: the self-test dies otherwise.
+  # The fixture carries this repository's lock, so the probe fetches nothing
+  local probe="$work/probe"
+  mkdir -p "$probe"
+  local sys
+  sys=$(nix config show system)
+  cat >"$probe/flake.nix" <<EOF
+{
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  outputs =
+    { nixpkgs, ... }:
+    {
+      packages.$sys.default =
+        nixpkgs.legacyPackages.$sys.runCommand "probe" { } "echo hello >\$out";
+    };
+}
+EOF
+  cp flake.lock "$probe/flake.lock"
+  git -C "$probe" init -q
+  git -C "$probe" add -A
+  git -C "$probe" -c user.email=d@d -c user.name=d commit -qm probe
+  ./drv-diff.sh -C "$probe" >"$work/out" 2>&1 ||
+    fail "drv-diff called an unchanged tree changed: $(cat "$work/out")"
+  grep -q 'planted changes caught' "$work/out" ||
+    fail "drv-diff ran without its own falsification: $(cat "$work/out")"
+
+  # A file the flake cannot see must stop the run. Answering "nothing moved" about an edit
+  # nobody staged is the one wrong answer that reads as good news
+  printf '_: { }\n' >"$probe/unstaged.nix"
+  status=0
+  DRV_DIFF_NESTED=1 ./drv-diff.sh -C "$probe" >"$work/out" 2>&1 || status=$?
+  ((status == 2)) ||
+    fail "drv-diff compared a tree holding an untracked .nix file (exit $status)"
+  grep -q 'untracked' "$work/out" ||
+    fail "drv-diff refused the untracked file without naming why: $(cat "$work/out")"
+  rm -f "$probe/unstaged.nix"
 
   echo "== the checker refuses a directory with no Nix in it"
   local empty="$work/empty"

@@ -23,6 +23,18 @@
 #
 #   defect NAME FILE FIND REPLACE CONSEQUENCE [expect survived REASON | expect caught FRAGMENT]
 
+# ---- drv-diff, which answers a different question ---------------------------------------------
+
+defect drv-diff-sees-past-untracked drv-diff.sh \
+  'if [[ -n "$untracked" ]]; then' \
+  'if [[ -z "$untracked" ]]; then' \
+  'A change written into a file nobody staged is invisible to both sides of the comparison, and the run answers "nothing moved" about an edit it never read. That is the one answer this tool must never give wrongly, because it is the answer people want'
+
+defect drv-diff-never-says-moved drv-diff.sh \
+  '    summary_rows="$summary_rows"$'"'"'\n'"'"'"  MOVED    $attr"' \
+  '    summary_rows="$summary_rows"$'"'"'\n'"'"'"  same     $attr"' \
+  'Every comparison reads as clean. A tool that only ever says "same" is worse than no tool: it is a signature on work nobody checked'
+
 # ---- the walk and the preflight -------------------------------------------------------------
 
 defect walk-drops-untracked check-nix.sh \

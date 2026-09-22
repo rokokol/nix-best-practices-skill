@@ -18,6 +18,7 @@ The second thing they cannot see is time. A derivation's hash, an input's copy, 
 - **End every change with `./check-nix.sh`**, from the repository root or with `-C DIR`; a repository that wires the checker into its `checks` output gets the same rules from `nix flake check`, minus the two that need the flake's inputs
 - **Ask `./check-nix.sh --list-rules` what it holds a tree to**, and `--help` for what each flag does, rather than inferring either from a finding
 - **Read a finding as a question about the code, not about the checker** — but when the answer is that this repository is the exception, say so once in `check-nix.allow` rather than in every review
+- **After a change meant to leave behaviour alone, ask `./drv-diff.sh` whether it did.** It evaluates every output of the flake here and at another revision and names the ones whose derivation path moved. Naming one output by hand answers a narrower question: what moves is rarely the output anybody thought to name, and a derivation that turns out to depend on the whole repository is found the same way
 
 ## The core
 

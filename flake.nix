@@ -94,6 +94,26 @@
             platforms = systems;
           };
         };
+
+        # nix-diff is in the runtime inputs rather than optional here. A command a consumer
+        # runs by name should explain a move, and the script still works without it
+        drv-diff = pkgs.writeShellApplication {
+          name = "drv-diff";
+          runtimeInputs = with pkgs; [
+            git
+            jq
+            nix
+            nix-diff
+          ];
+          text = builtins.readFile ./drv-diff.sh;
+          meta = {
+            description = "Says whether a change moved any derivation of a flake";
+            homepage = "https://github.com/rokokol/nix-best-practices-skill";
+            license = lib.licenses.mit;
+            mainProgram = "drv-diff";
+            platforms = systems;
+          };
+        };
       });
 
       # This dev shell pins the tools for check.sh and check-nix.sh, locally and in CI.
@@ -114,6 +134,8 @@
             # The checker calls these two linters. It does not repeat their work
             deadnix
             statix
+            # drv-diff.sh reports a move without it and explains one with it
+            nix-diff
           ];
         };
       });
