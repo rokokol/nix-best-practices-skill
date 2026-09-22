@@ -70,6 +70,11 @@ defect kebab-exempts-any-capital check-nix.sh \
   'if (i == n && p ~ /^[A-Z]/) continue' \
   'Any CamelCase path passes the kebab-case rule. A vendored font, or a module named the wrong way, is never reported'
 
+defect idle-rule-excuse-called-stale check-nix.sh \
+  '    case " $idle_rules " in *" $eid "*) continue ;; esac' \
+  '    : "$idle_rules"' \
+  'Every repository with a check-nix.allow goes red inside the nix flake check sandbox, and nowhere else. The excuse is correct; the rule it covers simply never ran there. A gate that is red only in one place teaches people to ignore that place'
+
 defect stale-excuse-forgiven check-nix.sh \
   'finding "$allow_file: \"$eid $epath\" excuses nothing' \
   ': "$allow_file: \"$eid $epath\" excuses nothing' \

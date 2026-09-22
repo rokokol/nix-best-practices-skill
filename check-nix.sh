@@ -971,19 +971,6 @@ done <<EOF
 $files
 EOF
 
-# ---- the excuses, read back --------------------------------------------------------------------
-# An entry that excused nothing this run is a finding of its own. It means one of two
-# things. Either the thing it covered is gone, and the line outlived its reason. Or the path
-# no longer matches, and the excuse has covered nothing since.
-# Nobody should find out about either one a year later
-if [[ -s "$work/allow" ]]; then
-  while IFS=$'\t' read -r eid epath; do
-    [[ -n "$eid" ]] || continue
-    grep -qxF "$eid	$epath" "$work/allow.used" ||
-      finding "$allow_file: \"$eid $epath\" excuses nothing — the finding it covered is gone"
-  done <"$work/allow"
-fi
-
 # ---- falsification ------------------------------------------------------------------------------
 # Every check above shows itself able to fail on this run, and not on the run that wrote it.
 # This script's own templates build a canon, and the run confirms the canon clean.
@@ -1145,6 +1132,27 @@ self_test() {
   printf 'file-kebab-case No_Such_File.txt\n' >"$c/check-nix.allow"
   expect_red "$c" "excuses nothing" "an excuse whose finding is gone"
 
+  # …and an excuse for a rule that did not run this invocation is not stale. A run cannot
+  # tell a dead excuse from one whose rule never got its turn, so it must not guess.
+  # Both shapes below are what the nix flake check sandbox hands a consumer
+  local idle_out idle_status
+  c=$(copy idle-eval-allow-plant)
+  printf 'flake-formatter flake.nix\n' >"$c/check-nix.allow"
+  idle_status=0
+  idle_out=$(CHECK_NIX_NESTED=1 "$BASH" "$self" --static -N example -C "$c" 2>&1) || idle_status=$?
+  ((idle_status == 0)) ||
+    die "self-test: --static called an excuse for an evaluated rule stale (exit $idle_status): $idle_out"
+  planted=$((planted + 1))
+
+  c=$(copy idle-names-allow-plant)
+  rm -rf "$c/.git"
+  printf 'file-kebab-case assets/\n' >"$c/check-nix.allow"
+  idle_status=0
+  idle_out=$(CHECK_NIX_NESTED=1 "$BASH" "$self" --static -N example -C "$c" 2>&1) || idle_status=$?
+  ((idle_status == 0)) ||
+    die "self-test: a tree with no repository called a name excuse stale (exit $idle_status): $idle_out"
+  planted=$((planted + 1))
+
   # The tree's own rules. Each plant is a whole file, and not an edit to the canon. The
   # fixture then says plainly what shape it is about, and nothing else in it fires first
   c=$(copy aggregator-plant)
@@ -1211,6 +1219,13 @@ self_test() {
 }
 LOCK
   expect_red "$c" "locked to an absolute local path" "an input pointing at one machine's disk"
+
+  # …and the same lock once the repository excuses it. This proves the excuses are read back
+  # after the lock rule has run: earlier, and a used excuse still reads as a dead one
+  c=$(copy excused-local-input-plant)
+  cp "$work/local-input-plant/flake.lock" "$c/flake.lock"
+  printf 'lock-no-local-input flake.lock the checkout is this machine only, on purpose\n' >"$c/check-nix.allow"
+  expect_green "$c" "a lock finding the repository excuses, with the excuse counted as used"
 
   # The grammar meta.description must hold to. Only the half that judges gets a plant.
   # The half that obtains needs a locked flake and its inputs, and every green run on a real
@@ -1498,6 +1513,32 @@ check_eval() {
 
 check_lock
 ((static)) || check_eval
+
+# ---- the excuses, read back --------------------------------------------------------------------
+# After every rule has run, so an excuse for the lock or for an evaluated output has had its
+# chance to be used.
+# An entry that excused nothing this run is a finding of its own. It means one of two
+# things. Either the thing it covered is gone, and the line outlived its reason. Or the path
+# no longer matches, and the excuse has covered nothing since.
+# Nobody should find out about either one a year later.
+#
+# A rule that never ran this invocation is the exception. Its excuse could not be used, and
+# that says nothing about whether the excuse is stale. The nix flake check sandbox meets
+# both cases: it sees no git repository, so it checks no name, and --static leaves the
+# evaluated rules out. Without this, a repository goes red in the sandbox alone, over an
+# excuse that is correct everywhere else
+idle_rules=""
+((names_read || ${#paths[@]})) || idle_rules="$idle_rules file-kebab-case"
+((static == 0 && unforced == 0)) || idle_rules="$idle_rules flake-formatter meta-description-grammar meta-license"
+[[ -r "$root/flake.lock" ]] || idle_rules="$idle_rules lock-no-local-input"
+if [[ -s "$work/allow" ]]; then
+  while IFS=$'\t' read -r eid epath; do
+    [[ -n "$eid" ]] || continue
+    case " $idle_rules " in *" $eid "*) continue ;; esac
+    grep -qxF "$eid	$epath" "$work/allow.used" ||
+      finding "$allow_file: \"$eid $epath\" excuses nothing — the finding it covered is gone"
+  done <"$work/allow"
+fi
 
 # Last, so every rule it plants a defect against exists, and every real finding is already out
 [[ -n "${CHECK_NIX_NESTED:-}" ]] || self_test
