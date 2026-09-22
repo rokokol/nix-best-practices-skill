@@ -1271,13 +1271,15 @@ LOCK
   printf '{ pkgs, ... }:\n{\n  a = [ (pkgs.callPackage ./x.nix { }) ];\n}\n' >"$c/nested.nix"
   expect_green "$c" "a list whose element carries an attrset"
 
-  # A brace inside a string is not a nesting level, and an aggregator holding one is still an
-  # aggregator
+  # A brace inside a string is not a nesting level. The parser sorts keys, so a binding named
+  # before `options` comes first in the line the tokeniser walks: read its brace as nesting and
+  # `options` is no longer a key of the body, so the finding below stops being made
   c=$(copy string-brace-plant)
-  mkdir -p "$c/braced"
-  printf '_: {\n  imports = [ ];\n  # a key whose value holds a brace\n}\n' >"$c/braced/default.nix"
-  printf '{ lib, ... }:\n{\n  a = lib.mkDefault "battery {capacity}%%";\n}\n' >"$c/braced/held.nix"
-  expect_green "$c" "an attribute whose string value holds a brace"
+  # The brace is deliberately unpaired: a balanced pair inside a string raises the depth and
+  # lowers it again, so it would leave the walk where it started and prove nothing
+  printf '{ lib, ... }:\n{\n  a = "an opening brace { on its own";\n  options.services.mine.enable = lib.mkEnableOption "mine";\n}\n' \
+    >"$c/braced.nix"
+  expect_red "$c" 'declares options under "services"' "a brace in a string before the key that is read"
 
   # The form of `with` that shares the argument header's line, which the text anchor cannot see
   c=$(copy with-inline-plant)

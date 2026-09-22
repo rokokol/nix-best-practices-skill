@@ -84,6 +84,9 @@ check_lint() {
   ./check-sh.sh check-nix.sh
   CHECK_SH_NESTED=1 ./check-sh.sh check.sh
 
+  echo "== the skill itself holds to the rules for a skill"
+  ./check-skill.sh -n nix-best-practices .
+
   echo "== the repository's own Nix holds to the standard it ships"
   ./check-nix.sh
 

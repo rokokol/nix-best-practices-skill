@@ -6,7 +6,7 @@
 formatter = forAllSystems (pkgs: pkgs.nixfmt-tree);
 ```
 
-`nixfmt-tree` is that formatter wrapped to walk a whole tree rather than the files it is handed, which is what makes `nix fmt` at the repository root mean the same thing as `nix fmt` in a subdirectory. `nixfmt-rfc-style` is an alias of the same binary and needs no separate mention.
+`nixfmt-tree` is that formatter wrapped to walk a whole tree rather than the files it is handed, which is what makes `nix fmt` at the repository root mean the same thing as `nix fmt` in a subdirectory. `nixfmt-rfc-style` is an alias of the same binary and needs no separate mention
 
 ## What it decides, so nothing here does
 
@@ -26,7 +26,7 @@ nixfmt --check FILE    # a directory with no flake
 
 ## What it keeps either way, so the author decides
 
-The formatter preserves both of these, which means neither is settled by running it.
+The formatter preserves both of these, which means neither is settled by running it
 
 **The order of a module's arguments.** The standard ones first, in this order, then everything else alphabetically, then `...`:
 
@@ -52,7 +52,7 @@ A package is not a module and does not take this order. Its arguments come as ni
 }:
 ```
 
-The two are told apart by `...`: a module accepts arguments it does not name, a package names all of them.
+The two are told apart by `...`: a module accepts arguments it does not name, a package names all of them
 
 **Whether the arguments share a line.** Up to two go on one line, three or more go one per line:
 
@@ -66,10 +66,10 @@ The two are told apart by `...`: a module accepts arguments it does not name, a 
 }:
 ```
 
-**A comment's placement**, which the formatter moves nothing about. That has consequences past reading and is in [comments.md](comments.md).
+**A comment's placement**, which the formatter moves nothing about. That has consequences past reading and is in [comments.md](comments.md)
 
-**What a list is written against.** A list of nothing but `pkgs` attributes names `pkgs` once per element where the scope form names it once for the list; which lists that applies to, and which it must not, is in [scope.md](scope.md).
+**What a list is written against.** A list of nothing but `pkgs` attributes names `pkgs` once per element where the scope form names it once for the list; which lists that applies to, and which it must not, is in [scope.md](scope.md)
 
 ## When the formatter's own output moves
 
-A new `nixfmt` can change what it produces, and a repository then goes red on files nobody edited. Bump the pin and land the reformat as its own commit, separate from any change in behaviour: a reformat mixed into a behaviour change hides the change from every future reader of that diff.
+A new `nixfmt` can change what it produces, and a repository then goes red on files nobody edited. Bump the pin and land the reformat as its own commit, separate from any change in behaviour: a reformat mixed into a behaviour change hides the change from every future reader of that diff
