@@ -1,0 +1,8 @@
+# One entry per line: ID PATH [TEXT]. See check-comments.sh --help
+
+# tree-sitter's bash grammar rejects a case pattern that holds two or more quoted strings:
+# `case $t in *"a"*"b"*) ;; esac` is an ERROR while `case $t in *"a"*) ;; esac` parses.
+# The pattern here is correct bash. The inner case cannot drop its second half, because the
+# outer one only proves that "; (let " occurs somewhere, not that it occurs after "with ",
+# and the forms that do parse move the pattern into a variable away from the case it guards
+unparsed check-nix.sh ; (let
