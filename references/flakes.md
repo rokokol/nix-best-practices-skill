@@ -72,6 +72,14 @@ outputs =
 
 `inherit (nixpkgs) lib;` rather than `lib = nixpkgs.lib;` — the second is the shape `statix` rewrites
 
+The caller always passes `self`, whether or not the outputs read it. So a formal list with no `...` has to name it, and a named argument nothing reads is what `deadnix` objects to. Removing the name is not the answer — the flake then refuses to evaluate:
+
+```
+error: function 'outputs' called with unexpected argument 'self'
+```
+
+`...` accepts it and reads nothing, which is the honest shape for a flake that does not need its own outputs. An underscore does not work here, because the caller passes the name `self` and a formal called `_self` is a different name
+
 Name only the systems the flake can actually be evaluated for. A platform in the list that nothing there supports is a check that fails for a reason nobody will act on
 
 A `formatter` output is what makes `nix fmt` mean anything in the repository; without it the command does nothing and a gate has nothing to run
