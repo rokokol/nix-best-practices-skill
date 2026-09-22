@@ -63,7 +63,7 @@ rules() {
 nixfmt-formatted	delegated	a file nixfmt would rewrite
 statix	delegated	an antipattern statix names, minus the one lint that groups options by prefix
 deadnix	delegated	an unused binding, lambda argument or inherit
-file-kebab-case	names	a tracked path component that is not kebab-case
+file-kebab-case	names	a component of a tracked .nix file's path that is not kebab-case
 with-at-file-level	text	a with whose scope is the whole file body
 module-arg-order	header	formals not in the order: the standard ones, the rest alphabetically, then ...
 arg-line-shape	header	up to two named formals split across lines, or three and more on one
@@ -918,26 +918,25 @@ EOF
 fi
 
 # ---- the file names ------------------------------------------------------------------------------
-# Every path in the repository, not only the .nix ones. A theme directory or an asset breaks
-# the convention as readily as a module, and a rename must find every reference to it.
+# The path of each .nix file, its directories included. A rename of one must find every
+# reference to it, and the author chose the name.
+# Not every path in the repository. Measured across fifteen repositories: that wider rule
+# gave 152 findings and no true one. It fired on Cargo.toml, on a pytest test_*.py, on a
+# zsh completion's leading underscore, on a systemd template unit's @, on an X11 cursor and
+# on an Obsidian note's title. Cargo, pytest, zsh, systemd, X11 and Obsidian choose those
+# names, not the author, and the list of such conventions has no end.
 # Conventional root metadata is the one shape in capitals on purpose
 kebab_rows=""
 names_read=0
 if ((${#paths[@]} == 0)) && git -C "$root" rev-parse --git-dir >/dev/null 2>&1; then
   names_read=1
-  kebab_rows=$(git -C "$root" ls-files --cached --others --exclude-standard | awk '
+  kebab_rows=$(git -C "$root" ls-files --cached --others --exclude-standard -- '*.nix' | awk '
     {
       n = split($0, part, "/")
       for (i = 1; i <= n; i++) {
         p = part[i]
-        # Conventional metadata takes capitals on purpose, wherever it sits. README.md sits
-        # beside the code it describes, LICENSE and CLAUDE.md at the root, MEMORY.md in a
-        # directory of its own.
-        # The stem must be capitals throughout, so a CamelCase asset such as a vendored font
-        # does not come in with them.
-        # Only the last component takes the exemption. A directory in capitals got its name
-        # without the convention
-        if (i == n && p ~ /^[A-Z][A-Z0-9_-]*(\.[a-z0-9]+)?$/) continue
+        # No exemption for capitals. README.md and LICENSE earned one while this read every
+        # path; a .nix file named MODULE.nix is a finding, and so is a directory above one
         if (p ~ /^\.?[a-z0-9][a-z0-9.-]*$/) continue
         print $0 "\t" p
         break
@@ -1094,17 +1093,27 @@ self_test() {
   plant_after "$c" module.nix '  pkgs,' '  unusedArgument,'
   expect_red "$c" "Unused lambda pattern: unusedArgument" "an argument nothing reads"
 
-  # A path component that is not kebab-case. It is the file list the repository keeps, not the
-  # .nix walk, so the plant is a file of any kind
+  # A path component that is not kebab-case. The walk reads the repository's own file list,
+  # and --others puts a file there the moment it is written
   c=$(copy kebab-plant)
-  : >"$c/Not_Kebab.txt"
-  expect_red "$c" 'is not kebab-case' "a path component in snake case"
+  printf '_: { }\n' >"$c/Not_Kebab.nix"
+  expect_red "$c" 'is not kebab-case' "a module named in snake case"
 
-  # …and the exemption that keeps a README out of that finding. The same plant under a name
-  # in capitals throughout must pass. Otherwise every repository goes red on its own docs
-  c=$(copy kebab-metadata-plant)
-  : >"$c/NOTES.md"
-  expect_green "$c" "a document named in capitals the way metadata is"
+  # …and a directory above a module counts the same. A rename of it moves every module under
+  # it, so it is the author's choice as much as the file is
+  c=$(copy kebab-dir-plant)
+  mkdir -p "$c/Some_Dir"
+  printf '_: { }\n' >"$c/Some_Dir/fine.nix"
+  expect_red "$c" 'is not kebab-case' "a directory in snake case above a module"
+
+  # …and nothing else in the tree is judged. Cargo, pytest, zsh, systemd, X11 and Obsidian
+  # each require a name the author did not choose, and no list of them ever closes
+  c=$(copy kebab-foreign-plant)
+  mkdir -p "$c/tests" "$c/completions"
+  : >"$c/Cargo.toml"
+  : >"$c/tests/test_thing.py"
+  : >"$c/completions/_thing"
+  expect_green "$c" "names that Cargo, pytest and zsh require"
 
   # A with whose scope is the file. nixfmt puts it at column 0 only after a `let … in`, and
   # the canon has one. The plant is therefore what a consumer would have written

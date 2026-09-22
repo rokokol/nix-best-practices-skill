@@ -65,10 +65,10 @@ defect generated-exemption-misses check-nix.sh \
   'case "$1" in */no-such-generated-file.nix) return 0 ;; esac' \
   'The hardware-configuration.nix that NixOS writes starts to produce findings nobody can act on. A repository then learns to read past its own checker'
 
-defect kebab-exempts-any-capital check-nix.sh \
-  'if (i == n && p ~ /^[A-Z][A-Z0-9_-]*(\.[a-z0-9]+)?$/) continue' \
-  'if (i == n && p ~ /^[A-Z]/) continue' \
-  'Any CamelCase path passes the kebab-case rule. A vendored font, or a module named the wrong way, is never reported'
+defect kebab-reads-every-path check-nix.sh \
+  "ls-files --cached --others --exclude-standard -- '*.nix' | awk '" \
+  "ls-files --cached --others --exclude-standard | awk '" \
+  "Cargo.toml, a pytest test_*.py, a zsh completion's leading underscore and an X11 cursor all become findings. None of those names is the author's, and a repository answers with a check-nix.allow longer than the rule"
 
 defect idle-rule-excuse-called-stale check-nix.sh \
   '    case " $idle_rules " in *" $eid "*) continue ;; esac' \
