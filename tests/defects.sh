@@ -105,6 +105,11 @@ defect body-keys-ignores-strings check-nix.sh \
       if (c == "{" || c == "[" || c == "(") { depth++; word = ""; i++; continue }' \
   'The walk counts a brace inside a string as nesting. It then reads the keys of a default.nix wrong. The rule accuses an aggregator of configuring something'
 
+defect header-without-its-terminator check-nix.sh \
+  '      if (state != "body") { shape = "none"; named = 0; variadic = 0; after = 0; gap = 0; f = "" }' \
+  '      if (state != "never") { shape = "none"; named = 0; variadic = 0; after = 0; gap = 0; f = "" }' \
+  'Every flake.nix reads as a lambda whose formals are its own lines, indentation stripped. A file holding the bare word lib anywhere then draws the pkgs.lib finding, on a file that takes no arguments. Found by running the checker on a repository it was not written against'
+
 defect namespace-reads-any-depth check-nix.sh \
   '      if (MODE == "ns" && want_ns && depth == 1) {
         if (c ~ /[A-Za-z0-9_.-]/) { nsword = nsword c; i++; continue }' \

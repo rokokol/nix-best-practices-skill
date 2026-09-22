@@ -666,7 +666,14 @@ header_facts() { # header_facts FILE
     state == "body" && /^[[:space:]]*$/ { if (after) gap = 1; next }
     state == "body" && /^#/ { after = 1; next }
     state == "body" { exit }
-    END { printf "%s\t%d\t%d\t%d\t%d\t%d\t%s\n", shape, named, variadic, above, after, gap, f }
+    END {
+      # `}:` is what makes the lines above it a header. A file that opens with `{` and never
+      # reaches one is a plain attrset, and flake.nix is exactly that. Without this the walk
+      # reads all 294 of its lines as formals, and any line holding the bare word lib makes
+      # the pkgs.lib rule fire on a file that takes no arguments at all
+      if (state != "body") { shape = "none"; named = 0; variadic = 0; after = 0; gap = 0; f = "" }
+      printf "%s\t%d\t%d\t%d\t%d\t%d\t%s\n", shape, named, variadic, above, after, gap, f
+    }
   ' "$1"
 }
 
@@ -1185,6 +1192,15 @@ self_test() {
   c=$(copy pkgs-lib-plant)
   printf '{ lib, pkgs, ... }:\n{\n  a = pkgs.lib.mkForce 1;\n  b = lib.mkDefault 2;\n}\n' >"$c/forced.nix"
   expect_red "$c" "pkgs.lib where lib is already an argument" "pkgs.lib beside a lib argument"
+
+  # …and a file that opens with `{` and never reaches `}:` takes no arguments at all. Every
+  # flake.nix has that shape. The header walk must not read its lines as formals: one line
+  # holding the bare word lib would otherwise make the rule above fire on a file with no
+  # lib to confuse anything with
+  c=$(copy attrset-not-header-plant)
+  printf '{\n  outputs =\n    { nixpkgs, ... }:\n    {\n      a = nixpkgs.legacyPackages.x86_64-linux.lib.mkForce 1;\n      inherit\n        lib\n        ;\n    };\n}\n' \
+    >"$c/looks-like-a-header.nix"
+  expect_green "$c" "a plain attrset whose lines are not a lambda's formals"
 
   c=$(copy self-src-plant)
   # shellcheck disable=SC2016 # ${inputs.self} is Nix interpolation in the planted file, not this shell's
