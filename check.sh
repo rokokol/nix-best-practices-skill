@@ -46,7 +46,7 @@ cd "$HERE"
 
 # The scripts this repository owns, as opposed to the ones it vendors: a vendored copy is
 # its source's business and is held here only to being byte-equal to it
-own_scripts=(check-nix.sh check.sh)
+own_scripts=(check-nix.sh check.sh tests/defects.sh)
 
 mode="${1:-all}"
 case "$mode" in
@@ -105,11 +105,11 @@ check_behaviour() {
   mkdir -p "$d"
   ./check-nix.sh --template module >"$d/module.nix"
 
-  CHECK_NIX_NESTED=1 ./check-nix.sh -C "$d" ||
+  CHECK_NIX_NESTED=1 ./check-nix.sh -N example -C "$d" ||
     fail "a tree of nothing but the canonical module was rejected"
 
   printf '{ notFormatted  =  1; }\n' >"$d/ugly.nix"
-  if CHECK_NIX_NESTED=1 ./check-nix.sh -C "$d" >"$work/out" 2>&1; then
+  if CHECK_NIX_NESTED=1 ./check-nix.sh -N example -C "$d" >"$work/out" 2>&1; then
     fail "a tree holding an unformatted file passed"
   fi
   grep -q 'not formatted by nixfmt' "$work/out" ||
@@ -126,7 +126,7 @@ check_behaviour() {
   ./check-nix.sh --template module >"$repo/module.nix"
   git -C "$repo" add module.nix
   printf '{  unstaged  =  1; }\n' >"$repo/unstaged.nix"
-  if CHECK_NIX_NESTED=1 ./check-nix.sh -C "$repo" >"$work/out" 2>&1; then
+  if CHECK_NIX_NESTED=1 ./check-nix.sh -N example -C "$repo" >"$work/out" 2>&1; then
     fail "an unformatted file that was never staged passed — the walk cannot see it"
   fi
   grep -q 'unstaged.nix is not formatted' "$work/out" ||

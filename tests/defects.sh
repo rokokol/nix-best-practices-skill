@@ -74,6 +74,16 @@ defect body-keys-ignores-strings check-nix.sh \
   '      if (c == "never") { instr = 1; i++; continue }' \
   'A brace inside a string is counted as nesting, so the keys a default.nix binds are read wrong and an aggregator is accused of configuring something'
 
+defect namespace-reads-any-depth check-nix.sh \
+  '      if (MODE == "ns" && want_ns && depth == 1) {' \
+  '      if (MODE == "ns" && want_ns && depth >= 1) {' \
+  'An options block inside a types.submodule is read as a namespace the repository declares, so a module gets a finding about a name it never chose and the rule teaches people to ignore it'
+
+defect namespace-skips-lets-wrongly check-nix.sh \
+  '      if (substr(s, i, 4) != "let ") return substr(s, i)' \
+  '      if (substr(s, i, 4) != "never") return substr(s, i)' \
+  'A module that binds cfg before its body — which is nearly all of them — is read as having no body at all, so every rule that asks what the body holds silently asks it of nothing'
+
 # ---- the lock and the evaluation --------------------------------------------------------------
 
 defect lock-shape-guard-off check-nix.sh \

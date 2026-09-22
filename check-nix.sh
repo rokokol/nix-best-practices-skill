@@ -22,12 +22,15 @@ able to fail on every run, on canonical files with one defect planted, so a copy
 falsifies itself wherever it runs. Nothing in it is repository-specific, and it belongs
 in a repository's own gate
 
-  check-nix.sh [-C DIR] [--static] [PATH...]
+  check-nix.sh [-C DIR] [-N NAMESPACE]... [--static] [PATH...]
   check-nix.sh --template [module|package|flake]
   check-nix.sh --list-rules
 
   -C DIR       the repository root (default: the git toplevel of the working directory,
                else the working directory); flake.nix and flake.lock are looked for here
+  -N NAMESPACE a prefix this repository declares its own options under, such as rokokol
+               or programs.screen-shader; repeatable. A repository that declares options
+               and names none of these is told so rather than passed
   PATH...      check only these files instead of every .nix file under DIR; the flake
                and lock rules then run only when flake.nix is among them
   --static     run only what reads files, and nothing that evaluates the flake; it
@@ -76,6 +79,7 @@ flake-formatter	eval	a flake with no formatter, or one that is not nixfmt-tree
 meta-description-grammar	eval	a package whose meta.description breaks the grammar nixpkgs asks for
 meta-license	eval	a package with no meta.license
 list-with-pkgs	tree	a list whose every element is pkgs.something, written without with pkgs
+options-namespaced	tree	an option declared under a prefix this repository has not claimed
 EOF
 }
 
@@ -189,6 +193,7 @@ EOF
 
 # ---- arguments ----------------------------------------------------------------------------
 root=""
+namespaces=""
 paths=()
 static=0
 while (($#)); do
@@ -196,6 +201,11 @@ while (($#)); do
     -C)
       (($# >= 2)) || die "-C needs a directory"
       root="$2"
+      shift 2
+      ;;
+    -N)
+      (($# >= 2)) || die "-N needs a namespace"
+      namespaces="${namespaces:+$namespaces }$2"
       shift 2
       ;;
     --static)
@@ -476,12 +486,42 @@ body_awk='
     sub(/^[[:space:]]*(@[[:space:]]*[A-Za-z_][A-Za-z0-9_-]*[[:space:]]*)?:[[:space:]]*/, "", rest)
     return rest
   }
+  # A module usually binds cfg before its body, so the body sits behind a `let … in`. Stepping
+  # over that is what lets a rule ask about the body of an ordinary module rather than only of
+  # the few that bind nothing
+  function skip_lets(s,   n, i, depth, instr, c) {
+    while (1) {
+      n = length(s); i = 1
+      while (i <= n && substr(s, i, 1) == "(") i++
+      if (substr(s, i, 4) != "let ") return substr(s, i)
+      i += 4
+      depth = 0; instr = 0
+      while (i <= n) {
+        c = substr(s, i, 1)
+        if (instr) {
+          if (c == "\\") i++
+          else if (c == "\"") instr = 0
+          i++; continue
+        }
+        if (c == "\"") { instr = 1; i++; continue }
+        if (c == "(" || c == "[" || c == "{") { depth++; i++; continue }
+        if (c == ")" || c == "]" || c == "}") { depth--; i++; continue }
+        if (depth == 0 && substr(s, i, 4) == " in ") { i += 4; break }
+        i++
+      }
+      if (i > n) return ""
+      s = substr(s, i)
+    }
+  }
   {
-    body = skip_lambda($0)
+    body = skip_lets(skip_lambda($0))
     if (MODE == "head") { print substr(body, 1, 6); exit }
     n = length(body); i = 1
     while (i <= n && substr(body, i, 1) == "(") i++
-    if (substr(body, i, 1) != "{") { print "NOT-AN-ATTRSET"; exit }
+    if (substr(body, i, 1) != "{") {
+      if (MODE != "ns") print "NOT-AN-ATTRSET"
+      exit
+    }
     i++
     depth = 0; instr = 0; word = ""
     while (i <= n) {
@@ -495,12 +535,33 @@ body_awk='
       if (c == "{" || c == "[" || c == "(") { depth++; word = ""; i++; continue }
       if (c == "}" || c == "]" || c == ")") {
         if (c == "}" && depth == 0) break
+        # The options block can name more than one namespace, so the flag lives until that
+        # block closes rather than until its first key
+        if (MODE == "ns" && want_ns && depth == 1) { want_ns = 0; nsword = "" }
         depth--; word = ""; i++; continue
       }
       if (depth == 0) {
         if (c ~ /[A-Za-z0-9_.-]/) { word = word c; i++; continue }
-        if (c == "=" && word != "") { split(word, seg, "."); print seg[1]; word = ""; i++; continue }
+        if (c == "=" && word != "") {
+          split(word, seg, ".")
+          # The namespace a module declares its own options under is the first key below the
+          # body`s `options`. The parser expands a dotted path into nested sets, so that key is
+          # always one level down and never part of the name above it
+          if (MODE == "ns" && seg[1] == "options") { want_ns = 1 }
+          else if (MODE != "ns") print seg[1]
+          word = ""; i++; continue
+        }
         if (c == ";") { word = ""; i++; continue }
+      }
+      if (MODE == "ns" && want_ns && depth == 1) {
+        if (c ~ /[A-Za-z0-9_.-]/) { nsword = nsword c; i++; continue }
+        if (c == "=" && nsword != "") {
+          split(nsword, nseg, ".")
+          print nseg[1]
+          nsword = ""; i++; continue
+        }
+        if (c == ";") { nsword = ""; i++; continue }
+        i++; continue
       }
       i++
     }
@@ -551,6 +612,10 @@ flat_lists() { # flat_lists FILE -> one line per list that holds no nested list 
 
 body_keys() { # body_keys FILE -> the keys the body attrset binds at its own level
   tree_of "$1" | awk -v MODE=keys "$body_awk"
+}
+
+option_namespaces() { # option_namespaces FILE -> the first key under the body's own `options`
+  tree_of "$1" | awk -v MODE=ns "$body_awk"
 }
 
 body_head() { # body_head FILE -> the first six characters of the body, the lambda header gone
@@ -641,7 +706,7 @@ check_tree() { # check_tree FILE
 
   # A with whose scope is the file body. nixfmt writes the `let … in with` form at column 0, which
   # the text anchor catches; the form that shares the header's line only shows here
-  if [[ "$(body_head "$f")" == "(with "* ]]; then
+  if [[ "$(body_head "$f")" == "with "* ]]; then
     finding_unless_excused with-at-file-level "$f" \
       "$f: a with at the file level — its scope is every name the file goes on to bind"
   fi
@@ -715,6 +780,25 @@ check_tree() { # check_tree FILE
 $(flat_lists "$f")
 EOF
 
+  # An option declared under a prefix nixpkgs owns collides the day nixpkgs adds a module of
+  # that name, and the collision arrives as a type error in a file that did not change. The
+  # prefixes this repository claims are the ones it says out loud; a repository that declares
+  # options and claims none is told so rather than quietly passed
+  local ns
+  for ns in $(option_namespaces "$f"); do
+    case " $namespaces " in
+      *" $ns "*) continue ;;
+    esac
+    if [[ -z "$namespaces" ]]; then
+      finding_unless_excused options-namespaced "$f" \
+        "$f: declares options under \"$ns\" and no namespace is configured — name this repository's own with -N"
+    else
+      finding_unless_excused options-namespaced "$f" \
+        "$f: declares options under \"$ns\", which is not one of: $namespaces"
+    fi
+    break
+  done
+
   # default.nix is reserved for aggregators. The repository's own root is the exception: there it
   # is the entry a bare `nix-build` reaches for, not a list of modules
   if [[ "$(basename "$f")" == "default.nix" ]] && [[ "$(dirname "$f")" != "$root" ]]; then
@@ -740,8 +824,10 @@ check_header() { # check_header FILE
   [[ "$shape" == "inline" || "$shape" == "multi" ]] || return 0
 
   if [[ "$shape" == "multi" ]] && ((named <= 2)); then
+    local plural="arguments are"
+    ((named != 1)) || plural="argument is"
     finding_unless_excused arg-line-shape "$f" \
-      "$f: $named named arguments are stacked — up to two go on one line"
+      "$f: $named named $plural stacked — up to two go on one line"
   fi
   if [[ "$shape" == "inline" ]] && ((named >= 3)); then
     finding_unless_excused arg-line-shape "$f" \
@@ -906,7 +992,9 @@ nested() { # nested DIR [ARGS...] -> this script on DIR's copy, falsification sk
   shift
   local mode=()
   ((static == 0)) || mode=(--static)
-  CHECK_NIX_NESTED=1 "$BASH" "$self" -C "$d" ${mode[@]+"${mode[@]}"} "$@"
+  # The canon declares its options under `example`, so the copies are checked as a repository
+  # that has claimed that prefix; the plant that tests an unclaimed one names a different prefix
+  CHECK_NIX_NESTED=1 "$BASH" "$self" -C "$d" -N example ${mode[@]+"${mode[@]}"} "$@"
 }
 
 copy() { # copy NAME -> a fresh copy of the canon
@@ -1193,8 +1281,29 @@ LOCK
 
   # The form of `with` that shares the argument header's line, which the text anchor cannot see
   c=$(copy with-inline-plant)
-  printf '{ pkgs, ... }: with pkgs; {\n  a = jq;\n}\n' >"$c/inline.nix"
+  printf '{ pkgs, ... }: with pkgs;\n{\n  a = jq;\n}\n' >"$c/inline.nix"
   expect_red "$c" "a with at the file level" "a with sharing the argument header's line"
+
+  # An option under a prefix nixpkgs owns, and the same file once the prefix is claimed
+  c=$(copy namespace-plant)
+  printf '{ lib, ... }:\n{\n  options.services.mine.enable = lib.mkEnableOption "mine";\n}\n' >"$c/owned.nix"
+  expect_red "$c" 'declares options under "services"' "an option under a prefix nixpkgs owns"
+
+  # …and the other half of the rule: a repository that declares options and claims no prefix is
+  # told so, rather than having the whole rule quietly do nothing for want of configuration.
+  # This one bypasses nested(), which always claims the canon's prefix, so it carries the mode
+  # itself — without it the sandbox run tries to evaluate a flake it cannot fetch
+  local mode=()
+  ((static == 0)) || mode=(--static)
+  status=0
+  out=$(CHECK_NIX_NESTED=1 "$BASH" "$self" -C "$canon" ${mode[@]+"${mode[@]}"} 2>&1) || status=$?
+  ((status == 1)) ||
+    die "self-test: a repository declaring options with no namespace claimed was not told (exit $status): $out"
+  case "$out" in
+    *"no namespace is configured"*) ;;
+    *) die "self-test: the unclaimed-namespace case was reported as something else: $out" ;;
+  esac
+  planted=$((planted + 1))
 
   # A lock this cannot be reading right is a refusal rather than a pass
   c=$(copy short-lock-plant)
