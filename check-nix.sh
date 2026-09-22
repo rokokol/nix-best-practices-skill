@@ -373,13 +373,13 @@ check_statix() {
 
 # ---- delegated: deadnix ----------------------------------------------------------------------
 # One JSON object per file with a results array; jq flattens it to the same shape the other
-# two report in. The generated hardware-configuration.nix is excluded everywhere: NixOS writes
+# two report in. The generated file exemption is is_generated's and not restated here: NixOS writes
 # it and a repository does not edit it, so its unused pkgs argument is not anybody's finding
 check_deadnix() {
   local f
   printf '%s\n' "$files" | while IFS= read -r f; do
     [[ -n "$f" ]] || continue
-    case "$f" in */hardware-configuration.nix) continue ;; esac
+    is_generated "$f" && continue
     deadnix -o json "$f" 2>/dev/null |
       jq -r '.results[]? | "\(.line):\(.column): \(.message)"' |
       sed "s|^|$f:|"
@@ -1318,14 +1318,26 @@ LOCK
   esac
   planted=$((planted + 1))
 
-  # And the summary says what did not run. A shorter check that reads like a complete one is the
-  # failure this refuses, so the sentence that prevents it is itself checked
+  # And the summary says what did not run, in each of the two ways it can be short. A shorter
+  # check that reads like a complete one is the failure those sentences exist to prevent, so
+  # each of them is itself checked
   out=$(CHECK_NIX_NESTED=1 "$BASH" "$self" --static -C "$canon" 2>&1) || :
   case "$out" in
     *"--static, so nothing that evaluates the flake ran"*) ;;
     *) die "self-test: a --static run did not say the evaluated half was left out: $out" ;;
   esac
   planted=$((planted + 1))
+
+  # The canon has no lock, so forcing what its formatter evaluates to needs inputs this machine
+  # does not hold — which is the other way a run comes up short, and the other sentence
+  if ((static == 0)); then
+    out=$(CHECK_NIX_NESTED=1 "$BASH" "$self" -C "$canon" -N example 2>&1) || :
+    case "$out" in
+      *"an output needed inputs this machine does not hold"*) ;;
+      *) die "self-test: a run that could not force an output did not say so: $out" ;;
+    esac
+    planted=$((planted + 1))
+  fi
 }
 
 # ---- the lock ----------------------------------------------------------------------------------

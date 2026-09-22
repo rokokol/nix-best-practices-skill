@@ -62,21 +62,26 @@ defect tree-cache-collides check-nix.sh \
 defect lists-ignore-nesting check-nix.sh \
   '        else if (d == "{") nested = 1' \
   '        else if (d == "{") nested = 0' \
-  'A list holding an attrset is read as a flat one, so a callPackage call or a submodule is offered advice about with pkgs that would not compile'
+  'A list holding an attrset is read as a flat one, so a callPackage call or a submodule is offered advice about with pkgs that would not compile' \
+  expect survived 'The flag keeps such a list out of the test rather than out of the finding: a list holding an attrset cannot match "every element is a pkgs attribute" either way, because the attrset is in the text the pattern is matched against. It is there so that tightening the pattern later cannot quietly start offering advice inside a callPackage call'
 
 defect with-parse-half-gone check-nix.sh \
-  'if [[ "$(body_head "$f")" == "(with "* ]]; then' \
-  'if [[ "$(body_head "$f")" == "(never-matches "* ]]; then' \
+  'if [[ "$(body_head "$f")" == "with "* ]]; then' \
+  'if [[ "$(body_head "$f")" == "never-matches "* ]]; then' \
   'The form that shares the header line, `{ pkgs, ... }: with pkgs;`, opens a file-wide scope and nothing says so — only the form nixfmt puts at column 0 is still caught'
 
 defect body-keys-ignores-strings check-nix.sh \
-  '      if (c == "\"") { instr = 1; i++; continue }' \
-  '      if (c == "never") { instr = 1; i++; continue }' \
+  '      if (c == "\"") { instr = 1; i++; continue }
+      if (c == "{" || c == "[" || c == "(") { depth++; word = ""; i++; continue }' \
+  '      if (c == "never") { instr = 1; i++; continue }
+      if (c == "{" || c == "[" || c == "(") { depth++; word = ""; i++; continue }' \
   'A brace inside a string is counted as nesting, so the keys a default.nix binds are read wrong and an aggregator is accused of configuring something'
 
 defect namespace-reads-any-depth check-nix.sh \
-  '      if (MODE == "ns" && want_ns && depth == 1) {' \
-  '      if (MODE == "ns" && want_ns && depth >= 1) {' \
+  '      if (MODE == "ns" && want_ns && depth == 1) {
+        if (c ~ /[A-Za-z0-9_.-]/) { nsword = nsword c; i++; continue }' \
+  '      if (MODE == "ns" && want_ns && depth >= 1) {
+        if (c ~ /[A-Za-z0-9_.-]/) { nsword = nsword c; i++; continue }' \
   'An options block inside a types.submodule is read as a namespace the repository declares, so a module gets a finding about a name it never chose and the rule teaches people to ignore it'
 
 defect namespace-skips-lets-wrongly check-nix.sh \
