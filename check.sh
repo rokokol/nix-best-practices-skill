@@ -94,6 +94,16 @@ check_lint() {
   echo "== the skill itself holds to the rules for a skill"
   ./check-skill.sh -n nix-best-practices .
 
+  echo "== every document keeps the house rules a script can decide"
+  # One paragraph on one physical line, no trailing full stop, plain quotes, and an
+  # admonition in the shape GitHub renders as a box
+  ./check-prose.sh README.md CHANGELOG.md SKILL.md references/*.md
+
+  echo "== the changelog is dated, as a repository with no version's must be"
+  # -n rather than a VERSION file: a skill is read at whatever revision is checked out,
+  # so it has no version to be wrong about and `Unreleased` is a state it never leaves
+  ./check-changelog.sh -n CHANGELOG.md
+
   echo "== the repository's own Nix holds to the standard it ships"
   ./check-nix.sh
 
