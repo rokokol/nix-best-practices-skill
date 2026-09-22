@@ -1254,29 +1254,38 @@ LOCK
   # with less. The defect goes in the tools rather than in the text, which is the one thing a
   # planted line cannot express.
   # This asks about every tool, and not about one of them. A preflight that quietly drops a
-  # tool goes on to report a clean run, while that tool's half of the check does nothing
+  # tool goes on to report a clean run, while that tool's half of the check does nothing.
+  #
+  # A copy that exports its own PATH cannot take this plant. A wrapper builds such a copy
+  # when it pins the tools beside the script, and the nested run then finds the tool the
+  # plant took away. The property still holds there, and the wrapper is what holds it.
+  # So the plant steps aside and the summary says which of the two ran
   local tool p oldifs stripped out status
-  for tool in nixfmt statix deadnix jq nix-instantiate; do
-    stripped=""
-    oldifs=$IFS
-    IFS=:
-    # This drops only the PATH entries that hold this tool, so the rest of the userland
-    # survives. The run then fails on the tool, and not on a missing mktemp
-    for p in $PATH; do
-      [ -x "$p/$tool" ] || stripped="${stripped:+$stripped:}$p"
-    done
-    IFS=$oldifs
+  if grep -q '^export PATH=' "$self"; then
+    pinned_path=1
+  else
+    for tool in nixfmt statix deadnix jq nix-instantiate; do
+      stripped=""
+      oldifs=$IFS
+      IFS=:
+      # This drops only the PATH entries that hold this tool, so the rest of the userland
+      # survives. The run then fails on the tool, and not on a missing mktemp
+      for p in $PATH; do
+        [ -x "$p/$tool" ] || stripped="${stripped:+$stripped:}$p"
+      done
+      IFS=$oldifs
 
-    status=0
-    out=$(PATH="$stripped" CHECK_NIX_NESTED=1 "$BASH" "$self" -C "$canon" 2>&1) || status=$?
-    ((status == 2)) ||
-      die "self-test: a machine without $tool was not refused with exit 2 (got $status): $out"
-    case "$out" in
-      *"needs $tool"*) ;;
-      *) die "self-test: a machine without $tool was refused without naming it: $out" ;;
-    esac
-    planted=$((planted + 1))
-  done
+      status=0
+      out=$(PATH="$stripped" CHECK_NIX_NESTED=1 "$BASH" "$self" -C "$canon" 2>&1) || status=$?
+      ((status == 2)) ||
+        die "self-test: a machine without $tool was not refused with exit 2 (got $status): $out"
+      case "$out" in
+        *"needs $tool"*) ;;
+        *) die "self-test: a machine without $tool was refused without naming it: $out" ;;
+      esac
+      planted=$((planted + 1))
+    done
+  fi
 
   # A generated file is exempt, and the exemption must still match the name NixOS writes.
   # Without a fixture that holds one, an exemption that matches nothing reads as a clean run
@@ -1431,7 +1440,8 @@ meta_judge() { # meta_judge — reads the evaluated packages as JSON on stdin
   done
 }
 
-unforced=0 # outputs whose value needed inputs this machine does not hold
+unforced=0    # outputs whose value needed inputs this machine does not hold
+pinned_path=0 # this copy exports its own PATH, so no plant can take a tool away from it
 
 check_eval() {
   [[ -r "$root/flake.nix" ]] || return 0
@@ -1502,6 +1512,7 @@ summary="check-nix: $file_count .nix $noun, 3 tools, $rule_count rules"
 # hold to the naming convention, and the nix flake check sandbox is where that happens.
 # Silence about it would read as names this run checked and found good
 ((names_read || ${#paths[@]})) || summary="$summary; no repository here, so no name was checked"
+((pinned_path == 0)) || summary="$summary; this copy pins its own PATH, so the refusal of a machine without a tool was not planted"
 ((planted == 0)) || summary="$summary; $planted planted defects caught"
 printf '%s\n' "$summary" >&2
 

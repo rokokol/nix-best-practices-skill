@@ -35,6 +35,24 @@ defect preflight-forgets-deadnix check-nix.sh \
   'for t in nixfmt statix jq nix-instantiate git; do' \
   'A machine without deadnix reaches a green summary and says nothing about dead code. The summary does not mention that gap either'
 
+defect pinned-path-guard-off check-nix.sh \
+  "$(
+    cat <<'EOF'
+  if grep -q '^export PATH=' "$self"; then
+EOF
+  )" \
+  '  if false; then' \
+  'A copy whose wrapper pins the tools beside it dies on a plant that cannot work there. The consumer reads exit 2 on a tree where nothing is wrong, and the checker looks broken rather than the tree'
+
+defect pinned-path-guard-always check-nix.sh \
+  "$(
+    cat <<'EOF'
+  if grep -q '^export PATH=' "$self"; then
+EOF
+  )" \
+  '  if true; then' \
+  'Every run leaves out the five plants that prove a missing tool is refused. The summary says so, and a summary nobody reads is the whole risk'
+
 defect preflight-never-refuses check-nix.sh \
   '[[ -z "$missing" ]] ||' \
   '[[ -n "$missing" ]] ||' \

@@ -143,6 +143,27 @@ check_behaviour() {
   grep -q 'unstaged.nix is not formatted' "$work/out" ||
     fail "the unstaged file was not the one named: $(cat "$work/out")"
 
+  echo "== a copy whose PATH is pinned says which plant it could not take"
+  # A wrapper pins the tools beside the script and exports PATH from inside it. The plant
+  # that takes a tool away then cannot reach the nested run, so it steps aside.
+  # A run that checks less must say so, and this is the sentence that says it
+  local wrapped="$work/wrapped.sh"
+  {
+    head -n 1 check-nix.sh
+    printf 'export PATH="%s"\n' "$PATH"
+    tail -n +2 check-nix.sh
+  } >"$wrapped"
+  chmod +x "$wrapped"
+  bash "$wrapped" -N example -C "$d" >"$work/out" 2>&1 || :
+  grep -q 'pins its own PATH' "$work/out" ||
+    fail "a copy with a pinned PATH did not say the missing-tool plant was left out: $(cat "$work/out")"
+  # …and an ordinary copy does take that plant, so the sentence is not there.
+  # Without this half, a guard that always steps aside reads the same as one that never does
+  ./check-nix.sh -N example -C "$d" >"$work/out" 2>&1 || :
+  if grep -q 'pins its own PATH' "$work/out"; then
+    fail "an ordinary copy claimed its PATH was pinned, so five plants were left out for nothing"
+  fi
+
   echo "== the checker refuses a directory with no Nix in it"
   local empty="$work/empty"
   mkdir -p "$empty"
