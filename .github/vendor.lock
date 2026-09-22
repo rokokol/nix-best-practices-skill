@@ -7,3 +7,4 @@ check-pins.sh rokokol/ci-skill templates/check-pins.sh cfa9fb1ae44f73117feed5fa0
 check-changelog.sh rokokol/versioning-skill check-changelog.sh 09c77f196fe79f1fa20e517b567ded747caa6e29 143bc6f3f92a8e90ad2d66d3491cd03b21c08805
 check-skill.sh rokokol/skill-authoring-skill check-skill.sh 399d099461fbba8505d4750a582fab3f25bf83ce 3cb536abc18de6327b77ccf060826e793bf66280
 check-sh.sh rokokol/bash-best-practices-skill check-sh.sh 0ee5dea3a04bd43f44afee6146dc2f3028fc0cca ece16c8a425f5e4d08e3d7de751b9564048f1e83
+tests/t.sh rokokol/tests-skill t.sh 5378909ac1e63f658c1f2347cc11131f04f19c8a 4fa169edebe55ad0190b5fb5c45fc33142e4d7a3
