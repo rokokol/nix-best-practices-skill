@@ -7,10 +7,10 @@
     { nixpkgs, ... }:
     let
       inherit (nixpkgs) lib;
-      # Darwin too: the checker travels to repositories that run CI on macOS, and a
-      # contributor there gets `nix develop -c ./check.sh` rather than a flake that does
-      # not know their system. Apple silicon only — nixpkgs 26.11 dropped x86_64-darwin,
-      # and naming a platform the flake cannot be evaluated for is what the gate refuses.
+      # Darwin is here because the checker travels to repositories that run CI on macOS.
+      # A contributor there runs `nix develop -c ./check.sh`.
+      # Apple silicon only: nixpkgs 26.11 dropped x86_64-darwin.
+      # The gate refuses a platform that the flake cannot evaluate.
       systems = [
         "x86_64-linux"
         "aarch64-linux"
@@ -19,48 +19,49 @@
       forAllSystems = f: lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
     in
     {
-      # The pinned toolbox for check.sh and for check-nix.sh, locally and in CI. Every tool
-      # a check runs comes from here rather than from whatever the runner happens to have:
-      # an unpinned lookup changes a check's behaviour with zero change in the repository
+      # This dev shell pins the tools for check.sh and check-nix.sh, locally and in CI.
+      # A check takes each tool from here, never from the runner.
+      # An unpinned lookup changes what a check does while the repository stays the same.
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
           packages = with pkgs; [
             actionlint
-            # check-nix.sh reads flake.lock as the JSON it is, rather than grepping it
+            # check-nix.sh reads flake.lock as JSON. It does not grep the file
             jq
-            # Named rather than taken from `nix fmt`: the checker runs on a directory that
-            # may have no flake at all, and a repository's own formatter output is the
-            # treefmt wrapper around this same binary
+            # This entry names nixfmt, because `nix fmt` needs a flake.
+            # The checker also runs on a directory that has no flake.
+            # A repository's own formatter wraps this same binary with treefmt
             nixfmt
             shellcheck
             shfmt
-            # The two linters the checker dispatches to instead of reimplementing them
+            # The checker calls these two linters. It does not repeat their work
             deadnix
             statix
           ];
         };
       });
 
-      # The same rules under `nix flake check`, so a repository that already runs that gets them
-      # without a second command to remember. What it cannot do is say so out loud rather than
-      # quietly: --static leaves out everything that would need the flake's inputs, and the
-      # summary names that half instead of letting a shorter run read as a complete one
+      # This check gives the same rules to `nix flake check`.
+      # A repository that runs that command needs no second command.
+      # --static leaves out each rule that needs the flake's inputs.
+      # The summary names that half, so a short run does not look complete
       checks = forAllSystems (pkgs: {
         nix-lint =
           pkgs.runCommand "nix-lint"
             {
               nativeBuildInputs = with pkgs; [
                 deadnix
-                # The walk over a repository's own file list is git's, and so is the fixture the
-                # falsification pass builds; neither is here, but the checker refuses a machine
-                # missing a tool it names rather than discovering it halfway through
+                # git walks a repository's file list, and git builds the fixture for the
+                # falsification pass. Neither task happens here.
+                # The checker still refuses a machine that lacks a tool it names
                 git
                 jq
                 nix
                 nixfmt
                 statix
               ];
-              # Only what the checker reads, so an edit to a document does not rebuild this
+              # This source holds only what the checker reads.
+              # An edit to a document does not rebuild it
               src = lib.fileset.toSource {
                 root = ./.;
                 fileset = lib.fileset.unions [
@@ -70,9 +71,9 @@
               };
             }
             ''
-              # nix-instantiate --parse needs no store and no daemon, but it does create its state
-              # directory on the way in, and the sandbox's HOME is not writable. Measured: without
-              # these it fails on startup rather than on the expression it was given
+              # nix-instantiate --parse needs no store and no daemon.
+              # It still creates its state directory at startup, and the sandbox HOME is read-only.
+              # Measured: without these variables it fails at startup, not on the expression
               export HOME=$TMPDIR/home NIX_STATE_DIR=$TMPDIR/state NIX_CONF_DIR=$TMPDIR/conf
               export NIX_DATA_DIR=$TMPDIR/data NIX_LOG_DIR=$TMPDIR/log XDG_CACHE_HOME=$TMPDIR/cache
               mkdir -p "$HOME" "$NIX_STATE_DIR" "$NIX_CONF_DIR" "$NIX_DATA_DIR" "$NIX_LOG_DIR" "$XDG_CACHE_HOME"

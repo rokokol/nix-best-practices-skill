@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # A check that has never failed is a decoration, and this skill hands its checker to other
-# repositories
-# Needs bash 3.2 and POSIX tools only for its own code, plus git for the vendoring check and
-# for the fixture that proves an unstaged file is still seen, and nix to run the same rules
-# through the flake's own checks output; both halves call the flake's dev shell for their
-# tools — shellcheck and shfmt for what the repository ships, nixfmt, statix, deadnix, jq
-# and nix-instantiate for what check-nix.sh reads
+# repositories.
+# Needs bash 3.2 and POSIX tools only for its own code.
+# It also needs git for the vendoring check and for one fixture.
+# It needs nix to run the same rules through the flake's checks output.
+# Both halves take their tools from the flake's dev shell.
+# What the repository ships goes to shellcheck and shfmt.
+# What check-nix.sh reads goes to nixfmt, statix, deadnix, jq and nix-instantiate
 set -euo pipefail
 
 usage() {
@@ -15,23 +16,26 @@ rules, and prove that check-nix.sh can actually go red
 
   check.sh [lint|behaviour|all]
 
-Two halves, because they ask different questions. lint reads what the skill ships —
-its two scripts, its flake, its documents — and holds the scripts to the shell standard
-through check-sh.sh. behaviour runs check-nix.sh against throwaway fixtures and requires
-it to reject each one for that fixture's own defect. all, the default, is both
+Two halves, because they ask different questions.
+lint reads what the skill ships: its scripts, its flake and its documents.
+It holds the scripts to the shell standard through check-sh.sh.
+behaviour runs check-nix.sh against throwaway fixtures.
+Each fixture must be rejected for its own defect.
+all is both, and it is the default
 
   nix develop -c ./check.sh
 
-Unlike the shell standard's gate, neither half runs without the dev shell: check-nix.sh
-reads Nix with nixfmt, statix and deadnix, and a machine without them is refused rather
-than checked with less. What a bare bash can still prove about this repository is that
-check-nix.sh parses under the 3.2 it claims, which is a workflow's job and not this one's
+Neither half runs without the dev shell.
+check-nix.sh reads Nix with nixfmt, statix and deadnix.
+This gate refuses a machine without them; it does not check less.
+A bare bash can still prove that check-nix.sh parses under the 3.2 it claims.
+That proof belongs to a workflow, not to this script
 
 Environment: CHECK_NIX_NESTED=1 is set for every call after the first, so the checker's
 own falsification pass runs once rather than once per call
-Only one step reaches anything outside this machine: the nix flake check that builds the
-seam a consumer gets, which substitutes from the binary cache the way any Nix build does.
-Nothing fetches a source, and nothing writes anywhere but a temporary directory
+One step reaches outside this machine: the nix flake check that builds the consumer's seam.
+It substitutes from the binary cache, as any Nix build does.
+Nothing fetches a source. Nothing writes outside a temporary directory
 Exit 0 when everything holds, 1 on a failure or an unknown mode
 EOF
 }
@@ -44,8 +48,9 @@ fail() {
 HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 cd "$HERE"
 
-# The scripts this repository owns, as opposed to the ones it vendors: a vendored copy is
-# its source's business and is held here only to being byte-equal to it
+# The scripts this repository owns, as opposed to the ones it vendors.
+# A vendored copy belongs to its source.
+# This repository holds it to one thing: it must stay byte-equal to that source
 own_scripts=(check-nix.sh check.sh tests/defects.sh)
 
 mode="${1:-all}"
@@ -79,8 +84,9 @@ check_lint() {
   shfmt -d -i 2 -ci "${own_scripts[@]}"
 
   echo "== the scripts hold to the shell standard"
-  # The first call keeps check-sh.sh's own falsification pass; there is only one here, so
-  # nothing to skip, but the variable is set for the calls behaviour makes below
+  # The first call keeps check-sh.sh's own falsification pass.
+  # Only one call happens here, so nothing needs to skip it.
+  # The variable is still set, for the calls the behaviour half makes below
   ./check-sh.sh check-nix.sh
   CHECK_SH_NESTED=1 ./check-sh.sh check.sh
 
@@ -91,18 +97,19 @@ check_lint() {
   ./check-nix.sh
 
   echo "== and holds to it the way a consumer gets it, inside the sandbox"
-  # The same rules through checks.<system>.nix-lint, where there is no network, no store and no
-  # repository. It is the shape every consumer runs, so a seam that only works outside the
-  # sandbox would be found by them rather than here
-  # Not --offline: that forbids substitution, so the first change to this derivation stops being a
-  # rebuild and becomes a build of the world from source, which is how it was found
+  # The same rules through checks.<system>.nix-lint.
+  # That sandbox has no network, no store and no repository.
+  # Every consumer runs this shape, so a seam that fails only there must fail here first.
+  # Not --offline: that flag forbids substitution.
+  # The first change to this derivation then builds the world from source, as it once did
   CHECK_NIX_NESTED=1 nix flake check --no-write-lock-file
 }
 
 check_behaviour() {
   echo "== the checker rejects a defect it has never seen"
   # The falsification inside check-nix.sh plants into fixtures the checker itself prints.
-  # This half asks the other question: given a tree it did not build, does it still refuse?
+  # This half asks the other question.
+  # Given a tree it did not build, does the checker still refuse?
   # A fixture written here is the one thing that pass cannot cover
   local d="$work/tree"
   mkdir -p "$d"
@@ -119,10 +126,11 @@ check_behaviour() {
     fail "an unformatted file was rejected for the wrong reason: $(cat "$work/out")"
 
   echo "== a file written but not yet staged is still checked"
-  # Found by breaking this on purpose: with a bare `git ls-files` a new module is invisible
-  # until it is staged, so it passes here and fails in CI, where the same file is tracked.
-  # The fixture is a git repository on purpose — without one the walk is find, which never
-  # had the blind spot and would prove nothing
+  # A defect found this by breaking it on purpose.
+  # With a bare `git ls-files` a new module stays invisible until someone stages it.
+  # It then passes here and fails in CI, where the same file is tracked.
+  # The fixture is a git repository on purpose.
+  # Without one the walk uses find, which never had the blind spot
   local repo="$work/repo"
   mkdir -p "$repo"
   git -C "$repo" init -q

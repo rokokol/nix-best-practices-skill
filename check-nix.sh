@@ -14,39 +14,39 @@ usage() {
   cat <<'EOF'
 check-nix.sh — holds Nix sources to what the formatter cannot check
 
-nixfmt owns layout, statix owns the language's antipatterns and deadnix owns dead code,
-so this checker dispatches to those three and adds only what none of them can see: the
-shape of a module header, the scope a `with` opens, whether a derivation carries a meta,
-and whether the lock names a path that exists on one machine alone. Each check is proven
-able to fail on every run, on canonical files with one defect planted, so a copy
-falsifies itself wherever it runs. Nothing in it is repository-specific, and it belongs
-in a repository's own gate
+nixfmt owns layout. statix owns the language's antipatterns. deadnix owns dead code.
+This checker calls those three and adds only what none of them can see: the shape of a
+module header, the scope a `with` opens, whether a derivation carries a meta, and whether
+the lock names a path that exists on one machine alone.
+Every run proves each check able to fail. It plants one defect into a canonical file and
+requires the rejection. A copy therefore falsifies itself wherever it runs.
+Nothing here is repository-specific, and this belongs in a repository's own gate
 
   check-nix.sh [-C DIR] [-N NAMESPACE]... [--static] [PATH...]
   check-nix.sh --template [module|package|flake]
   check-nix.sh --list-rules
 
-  -C DIR       the repository root (default: the git toplevel of the working directory,
-               else the working directory); flake.nix and flake.lock are looked for here
+  -C DIR       the repository root. It defaults to the git toplevel of the working
+               directory, else to that directory. flake.nix and flake.lock live here
   -N NAMESPACE a prefix this repository declares its own options under, such as rokokol
-               or programs.screen-shader; repeatable. A repository that declares options
-               and names none of these is told so rather than passed
-  PATH...      check only these files instead of every .nix file under DIR; the flake
-               and lock rules then run only when flake.nix is among them
-  --static     run only what reads files, and nothing that evaluates the flake; it
-               exists for the nix flake check sandbox, which has neither network nor
-               store, says in the summary that the evaluated half did not run, and is
-               never chosen on its own — a missing tool is a refusal, not a quiet pass
+               or programs.screen-shader. Repeatable. A repository that declares options
+               and names none of these is told so, rather than passed
+  PATH...      check these files instead of every .nix file under DIR. The flake and lock
+               rules then run only when flake.nix is among them
+  --static     run only what reads files, and nothing that evaluates the flake. It exists
+               for the nix flake check sandbox, which has no network and no store. The
+               summary then says the evaluated half did not run. Nothing chooses this
+               flag on its own: a missing tool is a refusal, not a quiet pass
   --template   print a canonical module, package or flake and exit
   --list-rules print every rule with its tier and mechanism, and exit
 
-Environment: CHECK_NIX_NESTED=1 runs the checks and skips the self-test, which is how a
-gate that calls this more than once avoids proving the same copy twice. CHECK_NIX_GOLDEN
-set to anything makes the pinned shape of the parser's output deliberately wrong, which
-is how the self-test proves the refusal that shape is pinned by
+Environment: CHECK_NIX_NESTED=1 runs the checks and skips the self-test. A gate that calls
+this more than once uses it, so one copy is not proven twice. CHECK_NIX_GOLDEN, set to
+anything, makes the pinned shape of the parser's output deliberately wrong. The self-test
+uses it to prove the refusal that shape is pinned by
 Nothing here reaches the network
-Exit 0 when clean, 1 with one `check-nix: <what>` line per finding, 2 on a usage error,
-an unreadable path, a missing tool, a tool whose output shape moved, or nothing to check
+Exit 0 when clean. Exit 1 with one `check-nix: <what>` line per finding. Exit 2 on a usage
+error, an unreadable path, a missing tool, a moved tool output, or nothing to check
 EOF
 }
 
