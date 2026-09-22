@@ -19,17 +19,15 @@ so this checker dispatches to those three and adds only what none of them can se
 shape of a module header, the scope a `with` opens, whether a derivation carries a meta,
 and whether the lock names a path that exists on one machine alone. Each check is proven
 able to fail on every run, on canonical files with one defect planted, so a copy
-falsifies itself wherever it runs. It has no repo-specific part beyond -N, and belongs
+falsifies itself wherever it runs. Nothing in it is repository-specific, and it belongs
 in a repository's own gate
 
-  check-nix.sh [-C DIR] [-N NAMESPACE]... [--static] [PATH...]
+  check-nix.sh [-C DIR] [--static] [PATH...]
   check-nix.sh --template [module|package|flake]
   check-nix.sh --list-rules
 
   -C DIR       the repository root (default: the git toplevel of the working directory,
                else the working directory); flake.nix and flake.lock are looked for here
-  -N NAMESPACE the prefix this repository's own module options live under, such as
-               rokokol or programs.screen-shader; repeatable
   PATH...      check only these files instead of every .nix file under DIR; the flake
                and lock rules then run only when flake.nix is among them
   --static     run only what reads files, and nothing that evaluates the flake; it
@@ -60,7 +58,7 @@ die() { # the request itself is wrong
 rules() {
   cat <<'EOF'
 nixfmt-formatted	delegated	a file nixfmt would rewrite
-statix	delegated	an antipattern statix names, minus the two lints that fight module Nix
+statix	delegated	an antipattern statix names, minus the one lint that groups options by prefix
 deadnix	delegated	an unused binding, lambda argument or inherit
 file-kebab-case	names	a tracked path component that is not kebab-case
 with-at-file-level	text	a with whose scope is the whole file body
@@ -191,7 +189,6 @@ EOF
 
 # ---- arguments ----------------------------------------------------------------------------
 root=""
-namespaces=()
 paths=()
 static=0
 while (($#)); do
@@ -199,11 +196,6 @@ while (($#)); do
     -C)
       (($# >= 2)) || die "-C needs a directory"
       root="$2"
-      shift 2
-      ;;
-    -N)
-      (($# >= 2)) || die "-N needs a namespace"
-      namespaces+=("$2")
       shift 2
       ;;
     --static)
@@ -317,13 +309,14 @@ tree_preflight() {
 }
 tree_preflight
 
-# The two statix lints that fight module Nix, disabled for every repository at once rather
-# than argued about in each. empty_pattern wants `_:` where a NixOS module's signature is
-# `{ ... }:`, which is what nixpkgs and every module in this family writes. repeated_keys
-# wants `home.packages` and `home.sessionVariables` folded into one nested `home`, but a
-# dotted path at the top level is the module idiom and the module system does the merging
+# One statix lint is disabled for every repository at once rather than argued about in each.
+# repeated_keys wants `services.nginx.enable` and `services.postgresql.enable` folded into a
+# single nested `services`, because their paths share a first segment. In a module that segment
+# is an address into the global option tree rather than a structure the author chose, so the
+# lint groups by a string prefix and not by subject — and the module system merges definitions
+# across files anyway, which is what the nesting would be imitating
 cat >"$work/statix.toml" <<'EOF'
-disabled = ["empty_pattern", "repeated_keys"]
+disabled = ["repeated_keys"]
 EOF
 
 # ---- the files ----------------------------------------------------------------------------
@@ -463,6 +456,13 @@ body_awk='
   function skip_lambda(s,   n, i, j, d, c, rest) {
     n = length(s); i = 1
     while (i <= n && substr(s, i, 1) == "(") i++
+    # A module that names none of its arguments is a lambda over a plain identifier, `_: { … }`,
+    # and its head has no braces to walk
+    rest = substr(s, i)
+    if (rest ~ /^[A-Za-z_][A-Za-z0-9_-]*:[[:space:]]/) {
+      sub(/^[A-Za-z_][A-Za-z0-9_-]*:[[:space:]]*/, "", rest)
+      return rest
+    }
     if (substr(s, i, 1) != "{") return substr(s, i)
     j = i; d = 0
     while (j <= n) {
@@ -991,11 +991,11 @@ self_test() {
   plant_after "$c" module.nix '  cfg = config.example.thing;' '  lib = lib;'
   expect_red "$c" "statix W3" "a binding statix rewrites with inherit"
 
-  # statix again, from the other side: the two disabled lints must still be disabled, or a
-  # consumer's every module fires on its own signature
+  # statix again, from the other side: the one disabled lint must still be disabled, or every
+  # module that sets two options sharing a path prefix fires on the shape of the option tree
   c=$(copy statix-disabled-plant)
-  printf '{ ... }:\n{\n  a.b = 1;\n  a.c = 2;\n}\n' >"$c/aggregate.nix"
-  expect_green "$c" "the signature and the dotted paths the two disabled lints would reject"
+  printf '_: {\n  services.nginx.enable = true;\n  services.postgresql.enable = true;\n}\n' >"$c/two-services.nix"
+  expect_green "$c" "two unrelated options whose paths share a first segment"
 
   # deadnix: an argument named and never read
   c=$(copy deadnix-plant)
@@ -1044,12 +1044,12 @@ self_test() {
   # fixture says plainly what shape it is about and nothing else in it can fire first
   c=$(copy aggregator-plant)
   mkdir -p "$c/sub"
-  printf '{ ... }:\n{\n  imports = [ ];\n  services.thing.enable = true;\n}\n' >"$c/sub/default.nix"
+  printf '_: {\n  imports = [ ];\n  services.thing.enable = true;\n}\n' >"$c/sub/default.nix"
   expect_red "$c" "reserved for aggregators" "a default.nix that also configures something"
 
   c=$(copy aggregator-clean-plant)
   mkdir -p "$c/sub"
-  printf '{ ... }:\n{\n  imports = [ ];\n}\n' >"$c/sub/default.nix"
+  printf '_: {\n  imports = [ ];\n}\n' >"$c/sub/default.nix"
   expect_green "$c" "a default.nix that only imports"
 
   c=$(copy with-over-let-plant)
@@ -1057,7 +1057,7 @@ self_test() {
   expect_red "$c" "a with over a let" "a with whose body binds names of its own"
 
   c=$(copy lookup-path-plant)
-  printf '{ ... }:\n{\n  a = import <nixpkgs> { };\n}\n' >"$c/looked.nix"
+  printf '_: {\n  a = import <nixpkgs> { };\n}\n' >"$c/looked.nix"
   expect_red "$c" "a lookup path or NIX_PATH" "a lookup path"
 
   c=$(copy pkgs-lib-plant)
