@@ -30,6 +30,20 @@ A suffixed node name — `nixpkgs_2`, `ddlc-palette_2` — is a second copy of s
 
 An input that pins its own `nixpkgs` and warns when overridden is a legitimate second copy. Write the reason in a comment above the input, where the next reader meets it
 
+## A flake reads what git tracks, and nothing else
+
+A flake in a git repository takes its source from git, so a file nobody has staged is not there at all. Nix says so when an expression reaches for one:
+
+```
+error: Path 'tests/no-secrets.sh' in the repository "…" is not tracked by Git
+```
+
+That error is the good case. The bad one is silence: a check that walks the source and finds nothing to object to passes, and a comparison of two revisions reports that nothing moved, both of them about a file neither side ever read. A new module is the common shape — written, evaluated in the editor, never staged
+
+`git add -N` is enough, and it stages no content. Measured: before it the flake's source holds `flake.nix` alone; after it, the new file is there
+
+`path:.` is the other way to be seen, and it is worse: it takes the directory as it is, `.git` included, so the source changes with every commit and the store copy carries the whole history
+
 ## The lock holds no local path
 
 While an input is being worked on locally it is tempting to point at the checkout:
