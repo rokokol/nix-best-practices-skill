@@ -30,6 +30,14 @@ A suffixed node name — `nixpkgs_2`, `ddlc-palette_2` — is a second copy of s
 
 An input that pins its own `nixpkgs` and warns when overridden is a legitimate second copy. Write the reason in a comment above the input, where the next reader meets it
 
+`inputs` is read before any input exists, so it is data and not code: Nix accepts a literal attribute set there and nothing else. A `let` around it, an `import` of a file, a function that builds an entry and a `//` that merges two all fail alike, measured on Nix 2.34:
+
+```
+error: expected a set but got a thunk at …/flake.nix:2:3
+```
+
+So a `follows` repeated on twenty inputs is written out twenty times. What keeps that honest is the lock above, not a helper that would shorten it
+
 ## A flake reads what git tracks, and nothing else
 
 A flake in a git repository takes its source from git, so a file nobody has staged is not there at all. Nix says so when an expression reaches for one:
