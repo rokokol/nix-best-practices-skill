@@ -90,9 +90,9 @@ defect generated-exemption-misses check-nix.sh \
   'The hardware-configuration.nix that NixOS writes starts to produce findings nobody can act on. A repository then learns to read past its own checker'
 
 defect kebab-reads-every-path check-nix.sh \
-  "ls-files --cached --others --exclude-standard -- '*.nix' | awk '" \
-  "ls-files --cached --others --exclude-standard | awk '" \
-  "Cargo.toml, a pytest test_*.py, a zsh completion's leading underscore and an X11 cursor all become findings. None of those names is the author's, and a repository answers with a check-nix.allow longer than the rule"
+  "ls-files --cached --others --exclude-standard -- '*.nix'" \
+  "ls-files --cached --others --exclude-standard" \
+  "Cargo.toml, a pytest test_*.py, a zsh completion's leading underscore and an X11 cursor all become file-name findings. None of those names is the author's, and a repository answers with a check-nix.allow longer than the rule. The rules read the same walk, so the linters then get files that are not Nix"
 
 defect idle-rule-excuse-called-stale check-nix.sh \
   '    case " $idle_rules " in *" $eid "*) continue ;; esac' \

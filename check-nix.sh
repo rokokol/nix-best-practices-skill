@@ -336,12 +336,18 @@ EOF
 # does not descend into a result symlink that points at the store.
 # --others with --exclude-standard makes a file visible that nobody staged yet. Without it a
 # new module passes here and fails in CI, where git tracks the same file.
-# That failure is the one a gate exists to move earlier
+# That failure is the one a gate exists to move earlier.
+# The rules and the file names read this one walk, so they cannot disagree on what a
+# repository holds. The paths are relative to $root
+git_nix_files() {
+  git -C "$root" ls-files --cached --others --exclude-standard -- '*.nix'
+}
+
 nix_files() {
   if ((${#paths[@]})); then
     printf '%s\n' "${paths[@]}"
   elif git -C "$root" rev-parse --git-dir >/dev/null 2>&1; then
-    git -C "$root" ls-files --cached --others --exclude-standard -- '*.nix' | sed "s|^|$root/|"
+    git_nix_files | sed "s|^|$root/|"
   else
     find "$root" -name '*.nix' -type f -not -path '*/.git/*' -not -path '*/result/*'
   fi
@@ -938,7 +944,7 @@ kebab_rows=""
 names_read=0
 if ((${#paths[@]} == 0)) && git -C "$root" rev-parse --git-dir >/dev/null 2>&1; then
   names_read=1
-  kebab_rows=$(git -C "$root" ls-files --cached --others --exclude-standard -- '*.nix' | awk '
+  kebab_rows=$(git_nix_files | awk '
     {
       n = split($0, part, "/")
       for (i = 1; i <= n; i++) {
