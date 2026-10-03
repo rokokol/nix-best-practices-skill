@@ -3,9 +3,10 @@
 # in https://github.com/rokokol/ci-skill). Nobody edits a copy in place. A change happens
 # here, and it reaches them from here.
 # Its own code needs bash 3.2 and POSIX tools only, so a macOS runner runs it unchanged.
-# To read the Nix it gets, it also needs nixfmt, statix, deadnix, jq, nix-instantiate and git.
-# It reads that Nix three ways: as text after nixfmt, as the tree nix-instantiate re-prints,
-# and as the JSON that flake.lock already is.
+# To read the Nix it gets, it also needs nixfmt, statix, deadnix, jq, nix-instantiate, nix and git.
+# The self-test reads that line as the list of tools the preflight must refuse to run without.
+# It reads that Nix four ways: as text after nixfmt, as the tree nix-instantiate re-prints,
+# as the JSON that flake.lock already is, and as the values nix evaluates the outputs to.
 # There is no degraded mode. A Nix repository holds nix by definition, and a missing linter
 # stops the run rather than shortens it
 set -euo pipefail
@@ -266,7 +267,7 @@ trap 'rm -rf "$work"' EXIT
 tool_preflight() {
   local missing=""
   local t
-  for t in nixfmt statix deadnix jq nix-instantiate git; do
+  for t in nixfmt statix deadnix jq nix-instantiate nix git; do
     command -v "$t" >/dev/null 2>&1 || missing="${missing:+$missing, }$t"
   done
   [[ -z "$missing" ]] ||
@@ -1337,7 +1338,17 @@ LOCK
   # in a lookup. The nested run gets that directory alone, without the one link the plant
   # takes. Every tool then sits beside mktemp on every machine, so a plant that takes a
   # directory fails here, and not only on the machine whose layout it did not expect
-  local tool p f oldifs links merged="$work/path" out status
+  #
+  # The tools come from the file header and not from the preflight. A list read from the
+  # preflight shrinks with it, and a tool the preflight forgets would then be asked about
+  # nowhere
+  local tool tools p f oldifs links merged="$work/path" out status
+  tools=$(grep -m 1 '^# To read the Nix it gets, it also needs ' "$self") ||
+    die "self-test: the header no longer says which tools the checker needs"
+  tools=${tools#*also needs }
+  tools=${tools%.}
+  tools=${tools//,/}
+  tools=${tools/ and / }
   if grep -q '^export PATH=' "$self"; then
     pinned_path=1
   else
@@ -1355,7 +1366,7 @@ LOCK
     done
     IFS=$oldifs
 
-    for tool in nixfmt statix deadnix jq nix-instantiate git; do
+    for tool in $tools; do
       mv "$merged/$tool" "$work/taken" ||
         die "self-test: $tool is not among the commands on PATH, though the preflight found it"
       status=0

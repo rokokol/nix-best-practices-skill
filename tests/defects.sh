@@ -43,9 +43,15 @@ defect walk-drops-untracked check-nix.sh \
   'Nobody checks a module until someone stages it. CI then tracks the same file and goes red. The gate exists to move that failure earlier'
 
 defect preflight-forgets-deadnix check-nix.sh \
-  'for t in nixfmt statix deadnix jq nix-instantiate git; do' \
-  'for t in nixfmt statix jq nix-instantiate git; do' \
+  'for t in nixfmt statix deadnix jq nix-instantiate nix git; do' \
+  'for t in nixfmt statix jq nix-instantiate nix git; do' \
   'A machine without deadnix reaches a green summary and says nothing about dead code. The summary does not mention that gap either'
+
+defect preflight-forgets-nix check-nix.sh \
+  'for t in nixfmt statix deadnix jq nix-instantiate nix git; do' \
+  'for t in nixfmt statix deadnix jq nix-instantiate git; do' \
+  'A machine without nix fails only when a run reaches the evaluated rules, and then it says that nix could not name the system rather than that nix is missing. A --static run or a tree with no flake.nix passes on that machine' \
+  expect caught 'a machine without nix was refused without naming it'
 
 defect pinned-path-guard-off check-nix.sh \
   "$(

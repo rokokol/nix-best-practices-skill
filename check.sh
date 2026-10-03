@@ -7,7 +7,9 @@
 # Both halves take their tools from the flake's dev shell.
 # What the repository ships goes to shellcheck and shfmt.
 # The workflows go to actionlint and check-pins.sh.
-# What check-nix.sh reads goes to nixfmt, statix, deadnix, jq and nix-instantiate
+# The preflight below names only the tools this file calls itself. check-nix.sh refuses a
+# machine without one of its own tools and names that tool, so a copy of its list here
+# would be a second list to keep in step
 set -euo pipefail
 
 usage() {
@@ -28,7 +30,7 @@ all is both, and it is the default
 
 Neither half runs without the dev shell.
 check-nix.sh reads Nix with nixfmt, statix and deadnix.
-This gate refuses a machine without them; it does not check less.
+It refuses a machine without them, and so does this gate; neither checks less.
 check-nix.sh and drv-diff.sh claim bash 3.2.
 .github/workflows/macos.yml runs both under the real 3.2, not this script
 
@@ -64,7 +66,7 @@ case "$mode" in
   *) fail "no such mode: '$mode' — lint, behaviour or all" ;;
 esac
 
-tools=(nixfmt statix deadnix jq nix-instantiate)
+tools=(git nix)
 [[ "$mode" == behaviour ]] || tools+=(actionlint shellcheck shfmt)
 missing=()
 for tool in "${tools[@]}"; do
