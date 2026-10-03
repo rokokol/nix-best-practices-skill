@@ -1255,25 +1255,53 @@ LOCK
   # The grammar meta.description must hold to. Only the half that judges gets a plant.
   # The half that obtains needs a locked flake and its inputs, and every green run on a real
   # repository proves it.
-  # Each case runs in a subshell, so the findings it prints stay out of this run's count
-  local judged
-  for judged in \
-    'default	thing	A thing that does things	article:opens with an article' \
-    'default	thing	Does things.	period:ends with a period' \
-    'default	thing	does things	case:starts lowercase' \
-    'default	thing	thing that does things	name:opens with the package'"'"'s own name' \
-    'default	thing	Does things	license:no meta.license'; do
-    local row="${judged%%	*}" rest="${judged#*	}" want
-    row="${judged%	*}"
-    want="${judged##*	}"
-    want="${want#*:}"
-    local out
-    out=$( (printf '%s\n' "$row" | meta_judge) 2>&1 || :)
-    case "$out" in
-      *"$want"*) ;;
-      *) die "self-test: a description this checker should have named was not: wanted \"$want\", got \"$out\"" ;;
-    esac
-    planted=$((planted + 1))
+  # Each case runs in a subshell, so the findings it prints stay out of this run's count.
+  # A case must draw its own finding and no other, and the last case must draw none.
+  # A rule that also fires on a good description still passes a test that only asks for red.
+  #
+  # The cases run again under a locale that sorts letters the way a dictionary does, if this
+  # machine has one. A range such as [a-z] in a bash pattern follows that order, and then
+  # matches H. Bash 4.3 added globasciiranges against this, and 5.0 turned it on by default.
+  # The bash 3.2 that macOS ships has neither, and the macOS runner sets en_US.UTF-8.
+  # The probe asks bash itself, because only its own pattern match shows the order it uses
+  local judged row want out pass passes="ambient"
+  if LC_ALL=en_US.UTF-8 "$BASH" -c 'shopt -u globasciiranges 2>/dev/null
+    case B in [a-c]) exit 0 ;; esac
+    exit 1' 2>/dev/null; then
+    passes="ambient dictionary"
+  else
+    dictionary_unjudged=1
+  fi
+  for pass in $passes; do
+    for judged in \
+      'default	thing	A thing that does things	MIT	opens with an article' \
+      'default	thing	Does things.	MIT	ends with a period' \
+      'default	thing	does things	MIT	starts lowercase' \
+      'default	Thing	Thing that does things	MIT	opens with the package'"'"'s own name' \
+      'default	thing	Does things		no meta.license' \
+      'default	thing	Does things	MIT	'; do
+      row="${judged%	*}"
+      want="${judged##*	}"
+      out=$( (
+        if [[ "$pass" == dictionary ]]; then
+          LC_ALL=en_US.UTF-8
+          shopt -u globasciiranges 2>/dev/null || :
+        fi
+        printf '%s\n' "$row" | meta_judge
+      ) 2>&1 || :)
+      if [[ -z "$want" ]]; then
+        [[ -z "$out" ]] ||
+          die "self-test: a description that breaks no rule was named, in the $pass locale: $out"
+      else
+        case "$out" in
+          *"$want"*) ;;
+          *) die "self-test: a description this checker should have named was not, in the $pass locale: wanted \"$want\", got \"$out\"" ;;
+        esac
+        [[ "$(printf '%s\n' "$out" | grep -c 'check-nix:')" == 1 ]] ||
+          die "self-test: a description drew findings beside its own, in the $pass locale: $out"
+      fi
+      planted=$((planted + 1))
+    done
   done
 
   # No document describes the printer the tree rules read, so the golden pins its shape.
@@ -1300,23 +1328,39 @@ LOCK
   # when it pins the tools beside the script, and the nested run then finds the tool the
   # plant took away. The property still holds there, and the wrapper is what holds it.
   # So the plant steps aside and the summary says which of the two ran
-  local tool p oldifs stripped out status
+  #
+  # The plant takes away one command, and never a directory. A system directory can hold a
+  # tool beside mktemp: /usr/bin/jq on macOS 15 and later, nix-instantiate in
+  # /run/current-system/sw/bin on NixOS. To drop such a directory drops the userland too,
+  # and the run then dies on mktemp before it can refuse anything.
+  # So one directory gets a link to each command this PATH finds, the first one winning as
+  # in a lookup. The nested run gets that directory alone, without the one link the plant
+  # takes. Every tool then sits beside mktemp on every machine, so a plant that takes a
+  # directory fails here, and not only on the machine whose layout it did not expect
+  local tool p f oldifs links merged="$work/path" out status
   if grep -q '^export PATH=' "$self"; then
     pinned_path=1
   else
-    for tool in nixfmt statix deadnix jq nix-instantiate; do
-      stripped=""
-      oldifs=$IFS
-      IFS=:
-      # This drops only the PATH entries that hold this tool, so the rest of the userland
-      # survives. The run then fails on the tool, and not on a missing mktemp
-      for p in $PATH; do
-        [ -x "$p/$tool" ] || stripped="${stripped:+$stripped:}$p"
-      done
+    mkdir "$merged"
+    oldifs=$IFS
+    IFS=:
+    for p in $PATH; do
       IFS=$oldifs
+      links=()
+      for f in "$p"/*; do
+        [[ -x "$f" && ! -d "$f" ]] || continue
+        [[ -e "$merged/${f##*/}" || -L "$merged/${f##*/}" ]] || links+=("$f")
+      done
+      ((${#links[@]} == 0)) || ln -s "${links[@]}" "$merged/"
+    done
+    IFS=$oldifs
 
+    for tool in nixfmt statix deadnix jq nix-instantiate git; do
+      mv "$merged/$tool" "$work/taken" ||
+        die "self-test: $tool is not among the commands on PATH, though the preflight found it"
       status=0
-      out=$(PATH="$stripped" CHECK_NIX_NESTED=1 "$BASH" "$self" -C "$canon" 2>&1) || status=$?
+      out=$(PATH="$merged" CHECK_NIX_NESTED=1 "$BASH" "$self" -C "$canon" 2>&1) || status=$?
+      mv "$work/taken" "$merged/$tool"
       ((status == 2)) ||
         die "self-test: a machine without $tool was not refused with exit 2 (got $status): $out"
       case "$out" in
@@ -1458,7 +1502,8 @@ meta_judge() { # meta_judge — reads the evaluated packages as JSON on stdin
         "$row: no meta.description — a package says in one sentence what it is"
     else
       case "$description" in
-        [a-z]*) finding_unless_excused meta-description-grammar "$row" \
+        # A class rather than a range: a range follows the locale's collation order
+        [[:lower:]]*) finding_unless_excused meta-description-grammar "$row" \
           "$row: meta.description starts lowercase: \"$description\"" ;;
       esac
       case "$description" in
@@ -1480,8 +1525,9 @@ meta_judge() { # meta_judge — reads the evaluated packages as JSON on stdin
   done
 }
 
-unforced=0    # outputs whose value needed inputs this machine does not hold
-pinned_path=0 # this copy exports its own PATH, so no plant can take a tool away from it
+unforced=0            # outputs whose value needed inputs this machine does not hold
+pinned_path=0         # this copy exports its own PATH, so no plant can take a tool away from it
+dictionary_unjudged=0 # no locale here sorts letters as a dictionary does
 
 check_eval() {
   [[ -r "$root/flake.nix" ]] || return 0
@@ -1579,6 +1625,7 @@ summary="check-nix: $file_count .nix $noun, 3 tools, $rule_count rules"
 # Silence about it would read as names this run checked and found good
 ((names_read || ${#paths[@]})) || summary="$summary; no repository here, so no name was checked"
 ((pinned_path == 0)) || summary="$summary; this copy pins its own PATH, so the refusal of a machine without a tool was not planted"
+((dictionary_unjudged == 0)) || summary="$summary; no locale here sorts letters as a dictionary does, so the description grammar was judged in this run's locale only"
 ((planted == 0)) || summary="$summary; $planted planted defects caught"
 printf '%s\n' "$summary" >&2
 

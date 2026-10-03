@@ -180,7 +180,7 @@ check_behaviour() {
   # Without this half, a guard that always steps aside reads the same as one that never does
   ./check-nix.sh -N example -C "$d" >"$work/out" 2>&1 || :
   if grep -q 'pins its own PATH' "$work/out"; then
-    fail "an ordinary copy claimed its PATH was pinned, so five plants were left out for nothing"
+    fail "an ordinary copy claimed its PATH was pinned, so the missing-tool plants were left out for nothing"
   fi
 
   echo "== drv-diff answers both ways, and refuses what it cannot see"

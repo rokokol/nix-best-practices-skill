@@ -63,7 +63,13 @@ defect pinned-path-guard-always check-nix.sh \
 EOF
   )" \
   '  if true; then' \
-  'Every run leaves out the five plants that prove a missing tool is refused. The summary says so, and a summary nobody reads is the whole risk'
+  'Every run leaves out the plants that prove a missing tool is refused. The summary says so, and a summary nobody reads is the whole risk'
+
+defect missing-tool-plant-takes-directory check-nix.sh \
+  'out=$(PATH="$merged" CHECK_NIX_NESTED=1 "$BASH" "$self" -C "$canon" 2>&1) || status=$?' \
+  'out=$(PATH="$work/nowhere" CHECK_NIX_NESTED=1 "$BASH" "$self" -C "$canon" 2>&1) || status=$?' \
+  'The plant takes the whole directory that holds the tool, and the userland goes with it. On macOS 15 /usr/bin holds jq beside mktemp, so the nested run dies on mktemp before it can refuse anything. The checker then fails on every Mac while the tree is fine' \
+  expect caught 'got 127'
 
 defect preflight-never-refuses check-nix.sh \
   '[[ -z "$missing" ]] ||' \
@@ -140,6 +146,12 @@ defect lock-shape-guard-off check-nix.sh \
   '((nodes >= 2)) ||' \
   '((nodes >= 0)) ||' \
   'A truncated flake.lock reads as a clean one. The rule that watches for a local path override then watches nothing'
+
+defect description-case-by-range check-nix.sh \
+  '        [[:lower:]]*) finding_unless_excused meta-description-grammar' \
+  '        [a-z]*) finding_unless_excused meta-description-grammar' \
+  'Under the bash 3.2 that macOS ships, a range follows the locale'"'"'s collation, and en_US.UTF-8 sorts H between h and i. Every description that opens with a capital then draws "starts lowercase". Only a machine with a dictionary-order locale can catch this, and the summary says when the run had none' \
+  expect caught 'in the dictionary locale'
 
 defect static-still-evaluates check-nix.sh \
   '((static)) || check_eval' \

@@ -12,6 +12,8 @@ Kept in the shape of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), d
 
 ### Fixed
 
+- Under the bash 3.2 that macOS ships, `check-nix.sh` said that a `meta.description` opening with a capital "starts lowercase". The rule tested a range, `[a-z]`, and bash 3.2 matches a range in the locale's collation order, where `H` sorts inside it. The rule now tests the `[[:lower:]]` class. The self-test judges each description again under en_US.UTF-8 with ASCII ranges turned off, when the machine has that locale, and a run without it says so in its summary
+- On macOS 15 and later and on NixOS, `check-nix.sh` failed its own self-test with exit 127. The self-test proves that a machine without a tool is refused, and it dropped every `PATH` directory that held the tool. On macOS `/usr/bin` holds `jq` beside `mktemp`, and on NixOS `/run/current-system/sw/bin` holds `nix-instantiate` beside it, so the run died on `mktemp` first. The plant now takes away one command and keeps every other one. It now also covers `git`, which the checker already refused to run without
 - In `references/comments.md` the `nixdoc` example holds a fenced block of its own, and its inner fence closed the outer one. The rest of the page then rendered as code, the heading "The comment that explains a deviation" included. The outer fence is four backticks now
 
 ## 2026-09-23
