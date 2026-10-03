@@ -48,7 +48,7 @@ The last is a language annotation: an editor reads it to highlight the embedded 
 
 `/** … */` before a binding is the documentation format `nixdoc` reads, and it is for a library function that someone will call from elsewhere:
 
-```nix
+````nix
 /**
   Turn a hex colour into the `rgba(rrggbbaa)` form Hyprland wants.
 
@@ -60,7 +60,7 @@ The last is a language annotation: an editor reads it to highlight the embedded 
   ```
 */
 rgba = hex: alpha: "rgba(${hex}${alpha})";
-```
+````
 
 It earns its cost where a function is an interface — a `lib` a flake exports, a helper several modules call. Over a module it does not: a module is not called, it is merged, and what a reader needs there is why rather than how to invoke it
 
