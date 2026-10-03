@@ -1,0 +1,35 @@
+name: ci
+
+# The gate. It reads only the repository and the inputs flake.lock pins, so pull requests
+# run it too. Shaped after templates/github/workflows/build.yml in
+# https://github.com/rokokol/ci-skill
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+  # vendor-sync.yml calls this file against its temporary branch. The new vendored copies
+  # then meet the real checks, not a copy of their commands
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # The gate builds the nix-lint check and evaluates nixpkgs several times.
+    # A cold runner substitutes all of it from the binary cache
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: cachix/install-nix-action@v31
+      - name: check.sh (the gate, self-tested on planted defects)
+        run: nix develop --no-write-lock-file -c ./check.sh

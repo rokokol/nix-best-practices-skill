@@ -1,0 +1,57 @@
+name: macos
+
+# check-nix.sh and drv-diff.sh travel to other repositories. Each header claims "bash 3.2
+# and POSIX tools only". This file proves the claim under the real /bin/bash 3.2 and the BSD
+# userland of a macOS runner. Each script plants its own defects on every run, and each
+# nested run goes through "$BASH", so the plants run under 3.2 too. Both scripts evaluate
+# this flake, so the run also shows that the aarch64-darwin outputs evaluate.
+#
+# Adapted from templates/github/workflows/macos.yml in
+# https://github.com/rokokol/bash-best-practices-skill. That template runs
+# `/bin/bash ./check.sh behaviour` with no tools. Here every half of check.sh needs nixfmt,
+# statix and deadnix, and check.sh starts nested scripts through their shebang, not through
+# "$BASH". So this file runs the two scripts directly.
+# The tools come from the nixpkgs that flake.lock pins, through nix shell. nix develop would
+# put GNU coreutils in front of the BSD tools that the claim is about. Each script refuses
+# to run without a tool it needs and names that tool, so a short list here fails loudly
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+  # vendor-sync.yml calls this file against its temporary branch, the same way it calls
+  # build.yml
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  bash32:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: cachix/install-nix-action@v31
+      # git comes from the runner image, and nix from the installer above. Both scripts name
+      # them as their dependencies, so the log records their versions
+      - name: the shell and the tools under proof
+        run: |
+          /bin/bash --version
+          if ! /bin/bash -c '((BASH_VERSINFO[0] == 3))'; then
+            echo "::error::/bin/bash on this runner is not bash 3.2, so this job proves nothing"
+            exit 1
+          fi
+          git --version
+          nix --version
+      - name: check-nix.sh over this repository, every rule planted, under /bin/bash 3.2
+        run: nix shell --no-write-lock-file --inputs-from . nixpkgs#deadnix nixpkgs#jq nixpkgs#nixfmt nixpkgs#statix -c /bin/bash ./check-nix.sh
+      - name: drv-diff.sh against HEAD, both answers planted, under /bin/bash 3.2
+        run: nix shell --no-write-lock-file --inputs-from . nixpkgs#jq nixpkgs#nix-diff -c /bin/bash ./drv-diff.sh

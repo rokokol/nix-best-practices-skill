@@ -9,6 +9,7 @@
 ![Bash](https://img.shields.io/badge/Bash-4EAA25?style=flat&logo=gnubash&logoColor=white)
 [![license](https://img.shields.io/badge/MIT-3DA639?style=flat)](LICENSE)
 [![ci](https://github.com/rokokol/nix-best-practices-skill/actions/workflows/build.yml/badge.svg)](https://github.com/rokokol/nix-best-practices-skill/actions/workflows/build.yml)
+[![macos](https://github.com/rokokol/nix-best-practices-skill/actions/workflows/macos.yml/badge.svg)](https://github.com/rokokol/nix-best-practices-skill/actions/workflows/macos.yml)
 
 </div>
 
@@ -96,6 +97,8 @@ checks.${system}.nix-lint = inputs.nix-best-practices.lib.mkCheck {
 `nix develop -c ./check.sh` runs the gate in two halves, because they ask different questions. The lint half holds the scripts, the flake and the documents to their rules, and runs the checker over this repository both directly and through `nix flake check`, which is the seam every consumer gets. The behaviour half gives the checker trees it did not build and requires each to be rejected for its own defect
 
 On top of that, every run of `check-nix.sh` plants one defect per rule into fixtures it prints itself and requires each to be rejected for that defect's own stated reason — a copy therefore falsifies itself wherever it runs. `tests/defects.sh` asks the other question: it breaks the machinery beneath the rules — the file walk, the tool preflight, the exemptions, the tokenisers — and requires the suite to notice
+
+Both scripts a consumer takes say they need nothing newer than the bash 3.2 macOS ships, and a macOS runner holds them to it: `check-nix.sh` and `drv-diff.sh` run there under `/bin/bash` and the BSD userland, each with its own planted defects
 
 ## Layout
 

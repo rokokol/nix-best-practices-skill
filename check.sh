@@ -6,6 +6,7 @@
 # It needs nix to run the same rules through the flake's checks output.
 # Both halves take their tools from the flake's dev shell.
 # What the repository ships goes to shellcheck and shfmt.
+# The workflows go to actionlint and check-pins.sh.
 # What check-nix.sh reads goes to nixfmt, statix, deadnix, jq and nix-instantiate
 set -euo pipefail
 
@@ -17,7 +18,7 @@ rules, and prove that check-nix.sh can actually go red
   check.sh [lint|behaviour|all]
 
 Two halves, because they ask different questions.
-lint reads what the skill ships: its scripts, its flake and its documents.
+lint reads what the skill ships: its scripts, its flake, its workflows and its documents.
 It holds the scripts to the shell standard through check-sh.sh.
 behaviour runs check-nix.sh against throwaway fixtures.
 Each fixture must be rejected for its own defect.
@@ -28,8 +29,8 @@ all is both, and it is the default
 Neither half runs without the dev shell.
 check-nix.sh reads Nix with nixfmt, statix and deadnix.
 This gate refuses a machine without them; it does not check less.
-A bare bash can still prove that check-nix.sh parses under the 3.2 it claims.
-That proof belongs to a workflow, not to this script
+check-nix.sh and drv-diff.sh claim bash 3.2.
+.github/workflows/macos.yml runs both under the real 3.2, not this script
 
 Environment: CHECK_NIX_NESTED=1 is set for every call after the first, so the checker's
 own falsification pass runs once rather than once per call
@@ -64,7 +65,7 @@ case "$mode" in
 esac
 
 tools=(nixfmt statix deadnix jq nix-instantiate)
-[[ "$mode" == behaviour ]] || tools+=(shellcheck shfmt)
+[[ "$mode" == behaviour ]] || tools+=(actionlint shellcheck shfmt)
 missing=()
 for tool in "${tools[@]}"; do
   command -v "$tool" >/dev/null || missing+=("$tool")
@@ -78,6 +79,13 @@ trap 'rm -rf "$work"' EXIT
 check_lint() {
   echo "== the vendored copies are still their sources'"
   ./vendor-sync.sh check
+
+  echo "== the workflows are valid, and their tools come from the lock rather than a registry"
+  # Without the directory nothing gates this repository, and the README badge points at
+  # nothing
+  [[ -d .github/workflows ]] || fail ".github/workflows is missing — nothing gates this repository"
+  actionlint
+  ./check-pins.sh .github/workflows
 
   echo "== the scripts parse and lint"
   shellcheck "${own_scripts[@]}"

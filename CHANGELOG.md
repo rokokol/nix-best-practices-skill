@@ -4,6 +4,12 @@ Kept in the shape of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), d
 
 ## 2026-10-03
 
+### Added
+
+- GitHub Actions workflows, which the repository never had: the `ci` badge in the README pointed at a `build.yml` that did not exist. `build.yml` runs `nix develop -c ./check.sh` on every push and pull request, and the gate now also lints the workflows with `actionlint` and `check-pins.sh`
+- A `macos` workflow and its badge. `check-nix.sh` and `drv-diff.sh` claim the bash 3.2 macOS ships, and each now runs there under the real `/bin/bash` and the BSD userland, with its own planted defects. The claim used to rest on `check-sh.sh`'s static reading alone
+- A weekly `vendor-sync` workflow, vendored from the [ci](https://github.com/rokokol/ci-skill) skill, takes the current revisions of the vendored checkers and lands them only when `build.yml` and `macos.yml` both pass on them
+
 ### Fixed
 
 - In `references/comments.md` the `nixdoc` example holds a fenced block of its own, and its inner fence closed the outer one. The rest of the page then rendered as code, the heading "The comment that explains a deviation" included. The outer fence is four backticks now
