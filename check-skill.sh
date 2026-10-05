@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Needs bash 3.2 and POSIX tools only, so it runs on a macOS runner unchanged. Taken from
+# Needs bash 3.2 and POSIX tools only, plus git, which --install asks for the repository's
+# own origin and does without. So it runs on a macOS runner unchanged. Taken from
 # https://github.com/rokokol/skill-authoring-skill through the vendoring cascade
 # (references/bump-cascade.md in https://github.com/rokokol/ci-skill): a copy is never
 # edited in place, a fix is made there. What it accepts is usage() below, and nowhere else
@@ -16,11 +17,23 @@ decoration, and a copy of this file is falsified in its own repository on every 
 has no repo-specific part, and belongs in a repository's own gate
 
   check-skill.sh [--strict] [-n NAME] [DIR]
+  check-skill.sh --install [--marketplace OWNER/REPO@NAME] [DIR]
 
 DIR is the skill's repository (default: the current directory). -n NAME is what the
 readme and the install symlink call the skill, which the frontmatter must agree with
 Nothing here reaches the network
 Exit 1 with `check-skill: <what>` on the first finding, 2 on a usage error
+
+--install prints the readme's Install section for DIR and exits, rather than checking
+it: the same channels in every skill, addressed to this one. The owner and the
+repository come from the origin remote, and the skill's name from the frontmatter. The
+prose between the blocks is the skill's own
+
+The plugin block needs two halves of one answer, the repository that carries the
+marketplace and the name that marketplace declares, and it is printed only where both
+are known. A marketplace in this repository answers both itself; one anywhere else is
+unreachable from here, so --marketplace gives it in the spelling /plugin install
+already uses. So the template cannot offer a channel nothing backs
 
 Two tiers. An error is what stops a skill loading or leaves a reference unread, and it
 is the first finding: exit 1, the message on stderr. A warning is a rule of the family
@@ -61,14 +74,38 @@ The warnings, by the id each line carries:
   trigger-duplicate  a trigger listed twice in the description
   readme-badge       the readme's badge row does not open with the Agent Skill badge
   harness-badge      the readme carries a harness badge, claiming a dependency
+  install-elsewhere  the readme's Install section clones the skill outside a skills
+                     directory, where only a symlink makes it readable
+  plugin-promise     the readme offers /plugin marketplace add, and the repository
+                     carries no .claude-plugin/marketplace.json
 EOF
 }
 
 self=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/$(basename -- "${BASH_SOURCE[0]}")
 want_name=""
 strict=""
+install=""
+marketplace=""
 while (($#)); do
   case "$1" in
+    --install)
+      install=1
+      shift
+      ;;
+    --marketplace)
+      (($# >= 2)) || {
+        echo "check-skill: --marketplace needs OWNER/REPO@NAME" >&2
+        exit 2
+      }
+      # Both halves or neither: a value without the name would print an install command
+      # addressed to a marketplace nobody declared
+      [[ "$2" == */*@* ]] || {
+        echo "check-skill: --marketplace takes OWNER/REPO@NAME, the repository and the name it declares" >&2
+        exit 2
+      }
+      marketplace="$2"
+      shift 2
+      ;;
     -n)
       # Not ${2:?}: that exits 1 with bash's own message, and a usage error is exit 2
       (($# >= 2)) || {
@@ -161,14 +198,82 @@ desc_chars=$(($(front_value description | LC_ALL=C tr -d '\200-\277' | wc -c) - 
 ((desc_chars <= 1024)) ||
   fail "the description is $desc_chars characters long, over the 1024 an agent will load"
 
+# ---- the readme's install section ------------------------------------------------------
+# Every channel ends in the reader's own skills directory, and the plugin block appears
+# only where the manifest it needs is in the repository, so the template cannot print a
+# promise the repository does not carry. What surrounds these blocks is the skill's own,
+# and this prints the part that is the same in every skill
+# shellcheck disable=SC2016 # the backticks are markdown fences, not command substitution
+if [[ -n "$install" ]]; then
+  slug=EXAMPLE/$name-skill
+  url=$(git remote get-url origin 2>/dev/null) || url=""
+  case "$url" in
+    *github.com[:/]*)
+      slug="${url#*github.com}"
+      slug="${slug#[:/]}"
+      slug="${slug%.git}"
+      ;;
+  esac
+  printf '## Install\n\n```bash\nnpx skills add -g %s    # for you, everywhere\nnpx skills add %s       # for the project you are standing in\n```\n\n' \
+    "$slug" "$slug"
+  # The two printed commands need two different halves of one answer: the repository that
+  # carries the marketplace, and the name that marketplace declares. A marketplace in this
+  # repository answers both itself; one anywhere else is unreachable from here, so it is
+  # given on the command line in the spelling the second command already uses
+  if [[ -n "$marketplace" ]]; then
+    market_slug="${marketplace%@*}"
+    market_name="${marketplace##*@}"
+  elif [[ -f .claude-plugin/marketplace.json ]]; then
+    market_slug="$slug"
+    market_name=$(sed -n 's/.*"name"[ \t]*:[ \t]*"\([^"]*\)".*/\1/p' .claude-plugin/marketplace.json | sed -n 1p)
+  else
+    market_slug=""
+    market_name=""
+  fi
+  if [[ -n "$market_slug" && -n "$market_name" ]]; then
+    printf 'Claude Code also takes it as a plugin:\n\n```\n/plugin marketplace add %s\n/plugin install %s@%s\n```\n\n' \
+      "$market_slug" "$name" "$market_name"
+  fi
+  printf 'or by hand — clone into whichever skills directory your agent reads:\n\n```bash\ngit clone https://github.com/%s ~/.claude/skills/%s\n```\n' \
+    "$slug" "$name"
+  exit 0
+fi
+
 # ---- links, and what they reach --------------------------------------------------------
+
+# fenced() -> 2 on a fence line, 1 inside a fenced block, 0 outside. Every awk program
+# here that must skip code starts with this text, so all of them agree on one rule. A
+# fence can stand inside a block quote at any depth. Only a fence of the same character,
+# at least as long, at the same depth and with no info string closes it. A line of
+# smaller depth ends the quote, so it ends the open block too
+# shellcheck disable=SC2016 # the backticks are markdown fences inside an awk program
+fence_awk='
+  function fenced(   s, d, c, len, rest) {
+    s = $0; d = 0
+    while (match(s, /^[ \t]*>/)) { d++; s = substr(s, RLENGTH + 1) }
+    if (fence_open && d < fence_depth) fence_open = 0
+    sub(/^[ \t]*/, "", s)
+    c = substr(s, 1, 1); len = 0
+    if (c == "`" || c == "~") { match(s, "^" c "+"); len = RLENGTH }
+    rest = substr(s, len + 1)
+    if (fence_open) {
+      if (d == fence_depth && c == fence_char && len >= fence_len && rest ~ /^[ \t]*$/) {
+        fence_open = 0
+        return 2
+      }
+      return 1
+    }
+    if (len < 3) return 0
+    fence_open = 1; fence_char = c; fence_len = len; fence_depth = d
+    return 2
+  }
+'
 
 # links_in DOC [numbered] -> one link target per line; code fences and spans are not links.
 # Numbered, each line is "LINE<TAB>target"
 links_in() {
-  awk -v q="'" -v numbered="${2:-}" '
-    /^[ \t]*(```|~~~)/ { fence = !fence; next }
-    fence { next }
+  awk -v q="'" -v numbered="${2:-}" "$fence_awk"'
+    fenced() { next }
     {
       line = $0
       gsub(/`[^`]*`/, "", line)
@@ -187,7 +292,7 @@ links_in() {
 resolve() {
   local doc="$1" target="$2" path
   case "$target" in
-    [a-z]*://* | mailto:* | //*) return 0 ;;
+    [[:alpha:]]*://* | mailto:* | //*) return 0 ;;
     /*) path=".$target" ;;
     *) path="$(dirname -- "$doc")/$target" ;;
   esac
@@ -203,10 +308,9 @@ resolve() {
 unicode_punct=$(printf '\342\200\224 \342\200\223 \302\253 \302\273 \342\200\234 \342\200\235 \342\200\230 \342\200\231 \342\200\246')
 
 anchors_of() { # anchors_of FILE -> one GitHub-style anchor per heading, duplicates suffixed
-  awk -v punct="$unicode_punct" '
+  awk -v punct="$unicode_punct" "$fence_awk"'
     BEGIN { n = split(punct, drop, " ") }
-    /^[ \t]*(```|~~~)/ { fence = !fence; next }
-    fence { next }
+    fenced() { next }
     /^##?#?#?#?#?([ \t]|$)/ {
       h = $0; sub(/^#+[ \t]*/, "", h); sub(/[ \t]+#+[ \t]*$/, "", h)
       for (i = 1; i <= n; i++) gsub(drop[i], "", h)
@@ -333,10 +437,9 @@ excused() { # excused FILE LINE ID -> 0 when an entry covers it, and that entry 
 }
 
 nwarn=0
-# A warning is human text and still goes to stdout, not stderr: the gates that run this
-# script on a copy with a planted defect read the first stderr line as the reason the copy
-# failed, and a warning there would be taken for it. DEVIATIONS.md in
-# https://github.com/rokokol/skill-authoring-skill holds the reasoning
+# A warning is human text and still goes to stdout, not stderr. Why that is worth the
+# oddity is in DEVIATIONS.md at https://github.com/rokokol/skill-authoring-skill, under
+# "Warnings go to stdout, findings to stderr"
 warn() { # warn FILE LINE ID WHAT
   ! excused "$1" "$2" "$3" || return 0
   nwarn=$((nwarn + 1))
@@ -350,11 +453,11 @@ warn() { # warn FILE LINE ID WHAT
 # 2, fenced blocks kept only when FENCES is 1. A phrase inside backticks is mentioned, not
 # used, and a phrase inside a link is somebody else's title
 lines_of() {
-  awk -v spans="$2" -v fences="$3" '
+  awk -v spans="$2" -v fences="$3" "$fence_awk"'
     NR == 1 && /^---$/ { front = 1; next }
     front { if (/^---$/) front = 0; next }
-    /^[ \t]*(```|~~~)/ { fence = !fence; next }
-    fence && !fences { next }
+    { fence = fenced() }
+    fence == 2 || (fence && !fences) { next }
     {
       line = $0
       if (spans) gsub(/`[^`]*`/, "", line)
@@ -401,7 +504,7 @@ why() { # why ID -> what the warning of that id tells the reader
 # lines only when it says so; lowercased when it says so; and matches RE but not UNLESS.
 # The regexes are awk string literals, so a literal dot is [.] rather than an escape
 # shellcheck disable=SC2016 # the backticks are markdown code spans inside an awk program
-prose_rules='
+prose_rules="$fence_awk"'
   function r(i, s, f, l, e, u) { n++; id[n] = i; sp[n] = s; fe[n] = f; lo[n] = l; re[n] = e; un[n] = u }
   BEGIN {
     r("layout-section", 0, 0, 0, "^#+[ \t]+Layout[ \t]*$", "")
@@ -418,7 +521,8 @@ prose_rules='
   }
   NR == 1 && /^---$/ { front = 1; next }
   front { if (/^---$/) front = 0; next }
-  /^[ \t]*(```|~~~)/ { fence = !fence; next }
+  { fence = fenced() }
+  fence == 2 { next }
   {
     s0 = $0
     s1 = s0; gsub(/`[^`]*`/, "", s1)
@@ -455,7 +559,7 @@ for doc in "${runtime[@]}"; do
         [[ "$repo" == *-skill && "$repo" != "$name-skill" && "$repo" != "$name" ]] || continue
         warn "$doc" "$n" cross-skill-link "links to $repo; runtime never routes to a sibling skill"
         ;;
-      [a-z]*://* | mailto:* | //*) ;;
+      [[:alpha:]]*://* | mailto:* | //*) ;;
       *)
         # Only a climb can leave the repository, and resolving costs a subshell per link, so
         # a target with no .. in it is taken as inside without asking
@@ -498,6 +602,62 @@ if [[ -f README.md ]]; then
   fi
   scan harness-badge README.md 0 0 0 'badge/Claude_Code|badge/Claude%20Code|badge/Codex|badge/Gemini' '' \
     'a harness badge claims a dependency; a skill is a directory with a SKILL.md, read by any harness'
+
+  # An install instruction puts the checkout where the agent reads it. A clone into some
+  # other directory is readable only through a symlink, which is one skill in two places,
+  # and the directory it names is the author's rather than the reader's. Only a command
+  # under the Install heading counts: a clone elsewhere in the readme is a dependency's
+  while IFS=$'\t' read -r n dest; do
+    warn README.md "$n" install-elsewhere \
+      "clones into $dest, outside a skills directory, where only a symlink makes it readable"
+  done < <(awk "$fence_awk"'
+    { fence = fenced() }
+    fence == 2 { next }
+    !fence && /^#+[ \t]/ {
+      # A heading that opens on the word, so "Install the skill" counts and "Installing
+      # the dependencies" does not: the second word is what tells them apart
+      sect = tolower($0) ~ /^#+[ \t]+(install|installation|setup|checkout)([ \t]|$)/
+      next
+    }
+    !sect || !fence { next }
+    {
+      # A command split over several lines is judged whole: the destination of a clone
+      # often sits on the continuation, and the warning names the line it starts on
+      if (!cont) { buf = ""; at = NR }
+      line = $0
+      cont = sub(/\\[ \t]*$/, "", line)
+      buf = buf line
+      if (cont) next
+      sub(/[ \t]+#.*$/, "", buf)
+      if (buf !~ /(^|[ \t;&|(])git[ \t]+clone[ \t]/) next
+      nf = split(buf, w, /[ \t]+/)
+      dest = w[nf]
+      # No destination at all, so the clone lands under the current directory and names
+      # nothing: a url in either spelling, or an option
+      if (dest ~ /:\/\// || dest ~ /^[^\/~.]+@/ || dest ~ /^-/) next
+      if (dest ~ /\/skills(\/|$)/) next
+      print at "\t" dest
+    }' README.md)
+
+  # A channel the readme offers is a channel the repository carries. /plugin marketplace
+  # add reads .claude-plugin/marketplace.json out of the repository it names, so a readme
+  # naming this one without shipping the file sends the reader to a command that refuses.
+  # A marketplace in another repository is not decided here: nothing reaches the network,
+  # and the repository is recognised by its name rather than by an origin remote, which a
+  # fresh checkout or a copy may not have
+  if [[ ! -f .claude-plugin/marketplace.json ]]; then
+    while IFS=$'\t' read -r n slug; do
+      case "${slug##*/}" in
+        "$name" | "$name-skill") ;;
+        *) continue ;;
+      esac
+      warn README.md "$n" plugin-promise \
+        "offers $slug as a marketplace, and .claude-plugin/marketplace.json is not in the repository"
+    done < <(awk '
+      /\/plugin[ \t]+marketplace[ \t]+add[ \t]/ {
+        for (i = 1; i < NF; i++) if ($i == "add") { print NR "\t" $(i + 1); break }
+      }' README.md)
+  fi
 fi
 
 # An excuse that excuses nothing is a rule switched off in advance: the next real violation
@@ -613,6 +773,33 @@ c=$(copy fenced)
 printf '\n```\n[not a link](references/not-there.md)\n```\n' >>"$c/SKILL.md"
 nested "$c" "${nargs[@]+"${nargs[@]}"}" >/dev/null 2>&1 ||
   fail "a link inside a code fence was treated as a link"
+
+# A fence inside a block quote is code at every depth. Only a closer that fenced() accepts
+# ends a block, and each wrong closer below must leave the link hidden
+c=$(copy fenced-quote)
+# shellcheck disable=SC2016 # the backticks are markdown fences, not command substitution
+printf '\n> ```markdown\n> [not a link](references/not-there.md)\n> ```\n\n> > ```\n> > [not a link](references/not-there.md)\n> > ```\n\n````markdown\n```\n[not a link](references/not-there.md)\n````\n' >>"$c/SKILL.md"
+# One block per wrong closer, so a closer taken wrongly cannot open the next block and
+# hide the link of the block it fails
+# shellcheck disable=SC2016 # the backticks are markdown fences, not command substitution
+for closer in '~~~' '> ```' '```sh'; do
+  printf '\n```\n%s\n[not a link](references/not-there.md)\n```\n' "$closer" >>"$c/SKILL.md"
+done
+nested "$c" "${nargs[@]+"${nargs[@]}"}" >/dev/null 2>&1 ||
+  fail "a link inside a quoted fence, or behind a fence that does not close it, was treated as a link"
+c=$(copy quote-dead-link)
+# shellcheck disable=SC2016 # the backticks are markdown fences, not command substitution
+printf '\n> ```\n> code\n> ```\n> [gone](references/nothing-here.md)\n' >>"$c/SKILL.md"
+expect_red "$c" "does not exist" "a dead link in a quote after a quoted fence" "${nargs[@]+"${nargs[@]}"}"
+c=$(copy quote-ends-fence)
+# shellcheck disable=SC2016 # the backticks are markdown fences, not command substitution
+printf '\n> ```\n> code\n\n[gone](references/nothing-here.md)\n' >>"$c/SKILL.md"
+expect_red "$c" "does not exist" "a dead link after a quote that ends its open fence" "${nargs[@]+"${nargs[@]}"}"
+c=$(copy idiom-quoted-fence)
+p=$(plant "$c" '> ```
+> You MUST always run the gate
+> ```')
+expect_quiet "$c" "$p:2: prompt-idiom" "an idiom inside a quoted fence"
 
 c=$(copy no-frontmatter)
 printf 'no frontmatter here\n' >"$c/SKILL.md"
@@ -801,6 +988,103 @@ c=$(copy harness-badge-excused)
 printf '# a skill\n\n[![Agent Skill](https://img.shields.io/badge/Agent_Skill-6E56CF?style=flat)](https://agentskills.io)\n![Claude Code](https://img.shields.io/badge/Claude_Code-D97757?style=flat)\n' >"$c/README.md"
 excuse "$c" 'harness-badge README.md'
 expect_quiet "$c" "README.md:4: harness-badge" "an excused harness badge"
+
+readme_install() { # readme_install COPY BODY [HEADING] — a readme whose install section is BODY
+  printf '# a skill\n\n[![Agent Skill](https://img.shields.io/badge/Agent_Skill-6E56CF?style=flat)](https://agentskills.io)\n\n## %s\n\n%s\n' \
+    "${3:-Install}" "$2" >"$1/README.md"
+}
+c=$(copy install-elsewhere)
+readme_install "$c" '```sh
+git clone https://github.com/example/a-skill ~/Projects/a
+ln -s ~/Projects/a ~/.claude/skills/a
+```'
+expect_warn "$c" "README.md:8: install-elsewhere" "a clone outside a skills directory"
+c=$(copy install-elsewhere-excused)
+readme_install "$c" '```sh
+git clone https://github.com/example/a-skill ~/Projects/a
+```'
+excuse "$c" 'install-elsewhere README.md'
+expect_quiet "$c" "README.md:8: install-elsewhere" "an excused clone outside a skills directory"
+c=$(copy install-in-place)
+readme_install "$c" '```sh
+git clone https://github.com/example/a-skill \
+  ~/.claude/skills/a
+```'
+expect_quiet "$c" "install-elsewhere" "a clone into the skills directory, split over two lines"
+c=$(copy install-no-destination)
+readme_install "$c" '```sh
+git clone https://github.com/example/a-skill   # then move it where your agent reads
+```'
+expect_quiet "$c" "install-elsewhere" "a clone that names no destination"
+c=$(copy install-heading-words)
+readme_install "$c" '```sh
+git clone https://github.com/example/a-skill ~/Projects/a
+```' 'Install the skill'
+expect_warn "$c" "README.md:8: install-elsewhere" "a clone under a heading that opens on the word"
+c=$(copy install-other-heading)
+readme_install "$c" '```sh
+git clone https://github.com/example/a-dependency ~/src/a-dependency
+```' 'Installing the dependencies'
+expect_quiet "$c" "install-elsewhere" "a clone outside the install section"
+
+c=$(copy plugin-promise)
+readme_install "$c" '```
+/plugin marketplace add example/'"$name"'-skill
+/plugin install '"$name"'@example-skills
+```'
+expect_warn "$c" "README.md:8: plugin-promise" "a marketplace in this repository that is not in it"
+c=$(copy plugin-promise-excused)
+readme_install "$c" '```
+/plugin marketplace add example/'"$name"'-skill
+```'
+excuse "$c" 'plugin-promise README.md'
+expect_quiet "$c" "README.md:8: plugin-promise" "an excused marketplace promise"
+c=$(copy plugin-manifest)
+readme_install "$c" '```
+/plugin marketplace add example/'"$name"'-skill
+```'
+mkdir -p "$c/.claude-plugin"
+printf '{ "name": "example-skills", "plugins": [] }\n' >"$c/.claude-plugin/marketplace.json"
+expect_quiet "$c" "plugin-promise" "a marketplace the repository carries"
+c=$(copy plugin-elsewhere)
+readme_install "$c" '```
+/plugin marketplace add example/skills
+/plugin install '"$name"'@example-skills
+```'
+expect_quiet "$c" "plugin-promise" "a marketplace in another repository, which is not decided here"
+
+# The template is held to the rules it exists to satisfy, by reading back what it prints:
+# a destination outside a skills directory, or a plugin block beside no manifest, is the
+# same defect whether a person wrote it or this script did
+c=$(copy install-template)
+mkdir -p "$c/.claude-plugin"
+printf '{ "name": "example-skills", "plugins": [] }\n' >"$c/.claude-plugin/marketplace.json"
+{
+  printf '# a skill\n\n[![Agent Skill](https://img.shields.io/badge/Agent_Skill-6E56CF?style=flat)](https://agentskills.io)\n\n'
+  "$self" --install "$c"
+} >"$c/README.md"
+grep -q '/plugin marketplace add' "$c/README.md" ||
+  fail "--install printed no plugin block for a repository carrying a manifest"
+expect_quiet "$c" "install-elsewhere" "the install section --install prints"
+expect_quiet "$c" "plugin-promise" "the plugin block --install prints beside a manifest"
+c=$(copy install-template-bare)
+{
+  printf '# a skill\n\n[![Agent Skill](https://img.shields.io/badge/Agent_Skill-6E56CF?style=flat)](https://agentskills.io)\n\n'
+  "$self" --install "$c"
+} >"$c/README.md"
+expect_quiet "$c" "plugin-promise" "--install offering no plugin where there is no manifest"
+# An `if`, not `grep … && fail`: a compound ending non-zero is what set -e ends the run on
+if grep -q '/plugin marketplace add' "$c/README.md"; then
+  fail "--install printed a plugin block for a repository carrying no manifest"
+fi
+c=$(copy install-template-elsewhere)
+{
+  printf '# a skill\n\n[![Agent Skill](https://img.shields.io/badge/Agent_Skill-6E56CF?style=flat)](https://agentskills.io)\n\n'
+  "$self" --install --marketplace example/skills@example-skills "$c"
+} >"$c/README.md"
+grep -q '/plugin install '"$name"'@example-skills' "$c/README.md" ||
+  fail "--install --marketplace printed no install command for the marketplace it was given"
+expect_quiet "$c" "plugin-promise" "--install pointed at a marketplace in another repository"
 
 # The allow file is held to what it prevents: an entry nothing uses is an error, and so is
 # a line that is not an entry
