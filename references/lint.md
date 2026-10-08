@@ -48,6 +48,8 @@ devShells = forAllSystems (pkgs: {
 
 and the gate is run as `nix develop -c ./check.sh`
 
+The shell lists `nixfmt` itself, not `nixfmt-tree`, which is the `formatter` output's package: the tree wrapper puts only `treefmt` on the PATH, so a gate that calls `nixfmt` finds none. `nix develop -c` keeps the host's PATH behind the shell's, so a host with its own `nixfmt` passes a gate that a runner without one fails. `nix develop -i -c bash -c 'command -v nixfmt'` asks the shell alone; a gate that also needs `nix` and `git` from the runner gets them added back to that PATH by hand
+
 `nix run nixpkgs#statix` is the other way, and it belongs to one-off work rather than to a check. It resolves against whatever the registry points at today, so the same command is a different program next week: a check that starts failing without a commit, or stops catching something without one. For a question asked once by a person, that is fine and convenient
 
 A missing tool is a refusal rather than a quieter run. An extractor that finds nothing must never read as nothing having drifted, so the answer to a machine without `deadnix` is to say so and stop, not to report a clean tree
