@@ -87,3 +87,21 @@ Home Manager can be loaded as a NixOS module. With `home-manager.useGlobalPkgs =
 So under `useGlobalPkgs` there is one place for an overlay: the system's own `nixpkgs.overlays`. From there it reaches both layers, because there is only one package set. Without `useGlobalPkgs`, Home Manager builds its own set and its `nixpkgs.overlays` applies to the user layer alone — two sets, two overlay lists, and packages built twice
 
 There is no option under `home-manager.` for this. The options that exist there configure how Home Manager is loaded, not what it builds with
+
+## Storage the disk layout declares
+
+A subvolume or a filesystem that the disk layout declares is made by the layout alone. The module that keeps data there exports what it needs as a read-only option, such as `subvolumes`, and the layout reads it: one list, two readers. The module never makes the path as a fallback. A fallback `btrfs subvolume create` is a second definition of the layout, and a fallback `mkdir` is worse: on a disk where the subvolume is missing it makes a plain directory, which a snapshot tool cannot snapshot, and nothing says so
+
+At start the module sets only what the layout has no option for, such as the owner and the mode, with `chown` and `chmod` on a path that must already exist. A missing path then fails the unit, and a failed unit is an alert. On a host installed before the module, the path is made once by hand; a reinstall makes it from the layout
+
+## Data on a volume that may be absent
+
+A volume mounted with `nofail` may be missing at boot, and a unit that writes to its mountpoint then writes to the root filesystem below it
+
+- Every unit that touches the volume carries `RequiresMountsFor` for its path and `ConditionPathIsMountPoint` for the mountpoint: the service, its socket, and the service of every snapshot or backup timer. A socket without them accepts a connection and fails it, and a service without them writes below the mountpoint on a manual start
+- No `systemd.tmpfiles` rule names a path on the volume: tmpfiles runs at boot whether or not the volume is mounted, and makes what it was told to on the root filesystem
+- Snapshots of the data sit on the same volume, as subvolumes the layout declares, taken by a timer with the same conditions. They undo a deletion, not the loss of the disk
+
+## Data is not configuration
+
+What a service keeps for its users — calendars, repositories, accounts, mailboxes — lives in its data, and the snapshots and backups keep it there. Declaring it again in Nix makes a second source of truth. The two drift on the first change a client makes: a renamed calendar, a deleted repository. Restoring a backup then disagrees with the configuration, and one of them has to win in silence. The configuration declares the service, the storage it needs and who may reach it. A client makes the data once, and the backup carries it from then on
