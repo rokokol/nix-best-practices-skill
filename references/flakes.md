@@ -38,6 +38,56 @@ error: expected a set but got a thunk at …/flake.nix:2:3
 
 So a `follows` repeated on twenty inputs is written out twenty times. What keeps that honest is the lock above, not a helper that would shorten it
 
+## Permanent external sources
+
+When a flake owns the update policy for an external source, declare a named input and pass its source to the package. Use `flake = false` when the consumer needs files rather than flake outputs
+
+```nix
+inputs.some-tool-src = {
+  url = "github:owner/some-tool";
+  flake = false;
+};
+
+outputs = { nixpkgs, some-tool-src, ... }: {
+  packages.x86_64-linux.default = nixpkgs.legacyPackages.x86_64-linux.callPackage ./package.nix {
+    src = some-tool-src;
+  };
+};
+```
+
+The input URL selects the repository and, if needed, a release tag or branch. `flake.lock` records the exact revision and content hash. Do not duplicate that pin in a fetcher or package expression: each copy creates a second source of truth. Use `nix flake update some-tool-src` to update that source without a second revision field in the package
+
+For a migration, first lock the current revision with `nix flake lock --override-input some-tool-src github:owner/some-tool/<current-revision>`. Check the lock and compare the source contents before a separate update. A different store name can change derivation paths even when the source contents match
+
+A permanent dependency uses this arrangement even when a temporary fix first introduced it. Keep a temporary compatibility pin explicit, with its removal condition. A commit in an input URL prevents ordinary updates of that input; keep it only while the compatibility constraint requires it
+
+This rule applies where the flake owns the source policy. A standalone nixpkgs package can retain its conventional fixed-output fetcher. A reusable package can accept `src` as an argument, so a flake caller supplies its locked input without a dependency on that caller
+
+`cargoHash` and `npmDepsHash` verify dependency archives, not the source input. Keep them in the package unless a separate dependency mechanism replaces them. Do not remove those checks or treat a source hash as their replacement
+
+### Sources outside GitHub
+
+The lock supports Git servers, GitLab, SourceHut, Mercurial, HTTP archives and plain files. A source does not need Git history or a `flake.nix` file
+
+```nix
+inputs.tool-src = {
+  url = "git+https://git.example.org/team/tool?ref=main";
+  flake = false;
+};
+inputs.theme-src = {
+  url = "https://downloads.example.org/theme.tar.gz";
+  flake = false;
+};
+inputs.asset = {
+  url = "file+https://downloads.example.org/asset.svg";
+  flake = false;
+};
+```
+
+For Git, the lock records the resolved revision and `narHash`. For an archive or file, it records the URL and content hash. The hash detects changed content; it cannot restore an old download that the server removed. Retain an accessible copy when the publisher replaces files at the same URL
+
+The [Nix flake reference](https://nix.dev/manual/nix/2.34/command-ref/new-cli/nix3-flake.html#types) defines the supported source types and lock fields
+
 ## A flake reads what git tracks, and nothing else
 
 A flake in a git repository takes its source from git, so a file nobody has staged is not there at all. Nix says so when an expression reaches for one:
