@@ -63,7 +63,7 @@ A permanent dependency uses this arrangement even when a temporary fix first int
 
 This rule applies where the flake owns the source policy. A standalone nixpkgs package can retain its conventional fixed-output fetcher. A reusable package can accept `src` as an argument, so a flake caller supplies its locked input without a dependency on that caller
 
-`cargoHash` and `npmDepsHash` verify dependency archives, not the source input. Keep them in the package unless a separate dependency mechanism replaces them. Do not remove those checks or treat a source hash as their replacement
+`cargoHash` and `npmDepsHash` verify dependency archives, not the source input. A source hash cannot replace those checks. Prefer an upstream lock importer where supported; see [dependency lock files](packages.md#dependency-lock-files)
 
 ### Sources outside GitHub
 

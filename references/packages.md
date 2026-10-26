@@ -84,6 +84,39 @@ packages = forAllSystems (pkgs: {
 
 The package file names the arguments it wants and `callPackage` supplies them by name from the package set. That is why a package file's arguments are the packages it needs rather than a single `pkgs`: the ones it names are the ones an override can replace
 
+## Dependency lock files
+
+Keep the dependency graph in the upstream lock file. Prefer a native Nix importer when that lock supplies the required versions and checksums. Do not maintain another version list or checksum map when the importer can derive it
+
+For `buildNpmPackage`, use `importNpmLock` to read `package-lock.json` from the same source as the application:
+
+```nix
+buildNpmPackage {
+  inherit src;
+  npmDeps = importNpmLock { npmRoot = src; };
+  npmConfigHook = importNpmLock.npmConfigHook;
+}
+```
+
+The importer reads each archive URL and integrity value from the upstream lock. An upstream dependency update therefore needs no separate `npmDepsHash` update in the consumer
+
+For `rustPlatform.buildRustPackage`, use the upstream `Cargo.lock` where its dependency sources support direct import:
+
+```nix
+rustPlatform.buildRustPackage {
+  inherit src;
+  cargoLock.lockFile = "${src}/Cargo.lock";
+}
+```
+
+Some Git dependencies still require `cargoLock.outputHashes` because their lock entries lack the content hash that Nix needs. Keep those hashes when the importer requires them
+
+An aggregate `npmDepsHash` or `cargoHash` checks a generated dependency archive; it does not select another set of versions. Retain the aggregate hash when the direct importer cannot represent the dependency sources or when a documented build constraint requires the aggregate fetcher. Do not remove integrity checks to avoid hash maintenance
+
+For another ecosystem, first check its native Nix support for the upstream lock format. Keep the application and its bundled skills on the same source revision. A dependency importer changes hash maintenance, not the application's update policy
+
+The nixpkgs implementations define the supported inputs: [importNpmLock](https://github.com/NixOS/nixpkgs/blob/master/pkgs/build-support/node/import-npm-lock/default.nix) and [importCargoLock](https://github.com/NixOS/nixpkgs/blob/master/pkgs/build-support/rust/import-cargo-lock.nix)
+
 ## Ask the derivation, not the expression
 
 What a package turns out to be is a different question from what its expression says, and the built derivation is the one that answers:

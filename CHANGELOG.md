@@ -8,6 +8,7 @@ Kept in the shape of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), d
 
 - Permanent sources owned by a flake use named inputs and `flake.lock`; explicit commit pins serve temporary compatibility constraints
 - The flakes reference covers source migration, dependency archive hashes, and inputs from Git servers, HTTP archives and plain files
+- Dependency guidance prefers native upstream lock importers, with npm and Cargo examples and explicit limits for required extra hashes
 
 ## 2026-10-20
 
