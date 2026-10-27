@@ -45,6 +45,18 @@ Give a repository's own options a namespace of their own rather than adding to o
 
 `cfg` is bound when the configuration is read more than once. For a single read, `config.example.thing.enable` is shorter than the binding that shortens it
 
+## Shared definitions and consumer adapters
+
+A shared module owns common option declarations and data. Each consumer imports that interface and translates the data into its own application settings
+
+Do not import consumer A's module merely to make shared options available to consumer B. Disabling A does not remove its imports or declarations, so B still depends on a component it does not use
+
+For example, editors that share an MCP registry import the registry module directly. Each editor's adapter renders its own protocol and file format. The registry does not assign options declared only by one editor
+
+Keep application packages, wrappers, plugins and feature options in their consumer adapters. Do not add placeholder consumer options or compatibility imports to make the shared module evaluate
+
+Evaluate the shared interface without either consumer, then evaluate each consumer separately. Removing A must leave the common interface and B valid
+
 ## What `mkIf` is for, and what it is not
 
 `lib.mkIf` defers the condition until the merge, so a module can depend on an option another module sets without either one forcing the other first. A plain `if` around a configuration block evaluates immediately and can close a cycle the module system would otherwise have resolved
@@ -105,3 +117,30 @@ A volume mounted with `nofail` may be missing at boot, and a unit that writes to
 ## Data is not configuration
 
 What a service keeps for its users — calendars, repositories, accounts, mailboxes — lives in its data, and the snapshots and backups keep it there. Declaring it again in Nix makes a second source of truth. The two drift on the first change a client makes: a renamed calendar, a deleted repository. Restoring a backup then disagrees with the configuration, and one of them has to win in silence. The configuration declares the service, the storage it needs and who may reach it. A client makes the data once, and the backup carries it from then on
+
+Decide ownership per setting, not from the filename. A `config.yaml` can contain administrator-owned settings and application-owned state. Nix may reapply the former; it must preserve the latter when the application or user edits them
+
+Before sharing a file between Nix and an application, inspect the module's actual write behavior. A deep merge, a symlink and a complete file replacement have different effects on runtime edits. Prefer native overlays or per-key merges that preserve application-owned values. Separate files when the writer cannot preserve that boundary
+
+## Deployment, initialization, migration and restoration
+
+Treat these as separate operations, with explicit repeat behavior
+
+| Operation | Responsibility | Repeat behavior |
+| --- | --- | --- |
+| Deployment | Apply declared packages, services, access rules and administrator-owned settings | Safe on an existing instance without resetting its application-owned state |
+| Initial setup | Create an empty instance and its initial defaults | Apply only to a new instance; preserve later edits and deliberate deletions |
+| Migration | Adapt existing data or storage to a changed design | Run for the affected old state; keep the declarative target for later installations |
+| Restoration | Recover preserved state from a backup | Recover the saved data instead of creating a fresh replacement |
+
+Use the application's setup, import or restore interface before writing a custom bootstrap tool. Extend an existing installer or deployment command when it already owns the required operation
+
+Do not run initial seeding on every activation. A missing calendar or removed integration can be a deliberate user change, not a request to recreate it. Detect a new instance through the application's own state or an explicit initialization record
+
+The storage rule above also applies to a migration on an existing host: declare the target in the disk layout and create it imperatively once. Do not turn that step into a service fallback
+
+A command used once per machine is not automatically disposable. Keep reproducible first-install and restore tools when the declarations do not cover their responsibilities. Remove migration-specific adapters and temporary inputs after verifying the transition. Record the removal condition instead of treating them as permanent deployment logic
+
+During restoration, recover application-owned state from its backup and reapply administrator-owned settings through their declared interface. Verify the effective result when both sources contain the same key. Do not run first-install seeding over restored state
+
+For a recovery image, build the system from the flake and restore preserved state from backups. Verify backup coverage before promising a full machine restore. Keep plaintext private data and decryption keys outside derivations; attach them to a private image copy or provide them at restore time

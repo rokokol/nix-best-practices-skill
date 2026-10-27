@@ -2,6 +2,13 @@
 
 Kept in the shape of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), dated rather than numbered, and with no `Unreleased` section — a skill is read at whatever revision you have checked out, so whatever is on the default branch is what everyone already has, and a section for work that has landed but not shipped would never close. The rule lives in the [versioning](https://github.com/rokokol/versioning-skill) skill, which owns what has no version
 
+## 2026-10-27
+
+### Added
+
+- Module guidance separates shared interfaces from application adapters, without imports of unrelated consumers or placeholder options
+- Deployment guidance distinguishes mutable state, initial setup, migration and restoration, including runtime edit preservation and reusable recovery tools
+
 ## 2026-10-26
 
 ### Added
