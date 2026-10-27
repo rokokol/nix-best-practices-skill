@@ -164,6 +164,43 @@ check_behaviour() {
   grep -q 'unstaged.nix is not formatted' "$work/out" ||
     fail "the unstaged file was not the one named: $(cat "$work/out")"
 
+  echo "== the evaluated rules read a license list, and their findings fail the run"
+  # The self-test judges rows it writes itself, so it never sees how the rows are obtained.
+  # nixpkgs allows meta.license to be a list, and the query once read only a single license.
+  # The rows also once reached the judge through a pipe, whose subshell lost the count.
+  # The flake has no inputs, so nothing is fetched. Its packages are plain attribute sets,
+  # because the query reads pname and meta and never forces a derivation
+  local evald="$work/evaluated" sys
+  mkdir -p "$evald"
+  sys=$(nix config show system)
+  licensed_flake() { # licensed_flake [PACKAGE...] -> a flake with a multi-license package
+    printf '{\n  outputs = _: {\n    packages.%s = {\n' "$sys"
+    printf '      several = {\n        pname = "several";\n        meta = {\n'
+    printf '          description = "Holds two licenses at once";\n'
+    printf '          license = [\n            { spdxId = "MIT"; }\n            { spdxId = "Apache-2.0"; }\n          ];\n'
+    printf '        };\n      };\n'
+    printf '%s' "$@"
+    printf '    };\n  };\n}\n'
+  }
+  licensed_flake >"$evald/flake.nix"
+  printf 'flake-formatter flake.nix the fixture flake has no inputs to take a formatter from\n' \
+    >"$evald/check-nix.allow"
+  CHECK_NIX_NESTED=1 ./check-nix.sh -N example -C "$evald" >"$work/out" 2>&1 ||
+    fail "a package with a list of licenses was rejected: $(cat "$work/out")"
+  if grep -q 'no meta.license' "$work/out"; then
+    fail "a package with a list of licenses was called unlicensed: $(cat "$work/out")"
+  fi
+  licensed_flake '      bare = {
+        pname = "bare";
+        meta.description = "Says nothing of its license";
+      };
+' >"$evald/flake.nix"
+  if CHECK_NIX_NESTED=1 ./check-nix.sh -N example -C "$evald" >"$work/out" 2>&1; then
+    fail "a package with no license passed: $(cat "$work/out")"
+  fi
+  grep -q 'packages.bare: no meta.license' "$work/out" ||
+    fail "a package with no license was rejected for the wrong reason: $(cat "$work/out")"
+
   echo "== a copy whose PATH is pinned says which plant it could not take"
   # A wrapper pins the tools beside the script and exports PATH from inside it. The plant
   # that takes a tool away then cannot reach the nested run, so it steps aside.
@@ -191,8 +228,6 @@ check_behaviour() {
   # The fixture carries this repository's lock, so the probe fetches nothing
   local probe="$work/probe"
   mkdir -p "$probe"
-  local sys
-  sys=$(nix config show system)
   cat >"$probe/flake.nix" <<EOF
 {
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";

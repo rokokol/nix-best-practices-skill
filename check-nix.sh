@@ -1260,8 +1260,7 @@ LOCK
   expect_green "$c" "a lock finding the repository excuses, with the excuse counted as used"
 
   # The grammar meta.description must hold to. Only the half that judges gets a plant.
-  # The half that obtains needs a locked flake and its inputs, and every green run on a real
-  # repository proves it.
+  # The half that obtains needs nix to evaluate a flake, so check.sh tests it on a fixture.
   # Each case runs in a subshell, so the findings it prints stay out of this run's count.
   # A case must draw its own finding and no other, and the last case must draw none.
   # A rule that also fires on a good description still passes a test that only asks for red.
@@ -1548,7 +1547,7 @@ dictionary_unjudged=0 # no locale here sorts letters as a dictionary does
 
 check_eval() {
   [[ -r "$root/flake.nix" ]] || return 0
-  local system outs name packages
+  local system outs name packages rows
   system=$(nix config show system 2>/dev/null) || system=""
   [[ -n "$system" ]] || die "nix could not say what system this is"
 
@@ -1585,18 +1584,26 @@ check_eval() {
     # A flake with no packages is not a finding: a module or a skill repository has none
     *) return 0 ;;
   esac
+  # meta.license is one license, a list of them, or a bare string, as nixpkgs allows all three.
+  # A list counts as licensed when any of its entries names a license
   packages=$(nix eval --offline --no-write-lock-file --json "$root#packages.$system" --apply '
-    ps: builtins.mapAttrs (n: p: {
+    ps: let
+      named = l: if builtins.isString l then l else l.spdxId or (l.shortName or "");
+      licenses = l: if builtins.isList l then map named l else [ (named l) ];
+    in builtins.mapAttrs (n: p: {
       pname = p.pname or n;
       description = p.meta.description or "";
-      license = p.meta.license.spdxId or (p.meta.license.shortName or "");
+      license = builtins.concatStringsSep " "
+        (builtins.filter (s: s != "") (licenses (p.meta.license or "")));
     }) ps' 2>/dev/null) || {
     unforced=1
     return 0
   }
-  printf '%s' "$packages" |
-    jq -r 'to_entries[] | [.key, .value.pname, .value.description, .value.license] | @tsv' |
-    meta_judge
+  # Into a variable first, and not down a pipe: the last stage of a pipe runs in a subshell,
+  # so every finding meta_judge counted there was lost before the exit code was decided
+  rows=$(printf '%s' "$packages" |
+    jq -r 'to_entries[] | [.key, .value.pname, .value.description, .value.license] | @tsv')
+  meta_judge <<<"$rows"
 }
 
 check_lock

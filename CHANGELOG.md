@@ -9,6 +9,11 @@ Kept in the shape of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), d
 - Module guidance separates shared interfaces from application adapters, without imports of unrelated consumers or placeholder options
 - Deployment guidance distinguishes mutable state, initial setup, migration and restoration, including runtime edit preservation and reusable recovery tools
 
+### Fixed
+
+- `check-nix.sh` accepts a `meta.license` that is a list or a string, as nixpkgs allows. Such a package is no longer reported as unlicensed
+- A finding about package metadata now makes `check-nix.sh` exit non-zero. Before, the run printed the finding and still passed
+
 ## 2026-10-26
 
 ### Added
